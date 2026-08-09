@@ -20,6 +20,7 @@ function createHarness(options: { fullscreenStopError?: Error } = {}) {
 			events.push(`parent.stop:${String(options?.preserveScreen)}`);
 		},
 		start: () => events.push("parent.start"),
+		renderNow: (force?: boolean) => events.push(`parent.renderNow:${String(force)}`),
 		requestRender: (force?: boolean) => events.push(`parent.render:${String(force)}`),
 	} as unknown as TUI;
 	let active: Component | undefined;
@@ -115,6 +116,10 @@ function immediateComponent(done: (value: string) => void, events: string[]): Fa
 	};
 }
 
+async function flushAsyncWork(): Promise<void> {
+	await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
 test("default fullscreen enables application-owned mouse selection and restores terminal modes", async () => {
 	const writes: string[] = [];
 	let outerDone: ((value: unknown) => void) | undefined;
@@ -135,6 +140,7 @@ test("default fullscreen enables application-owned mouse selection and restores 
 		getShowHardwareCursor: () => false,
 		stop() {},
 		start() {},
+		renderNow() {},
 		requestRender() {},
 	} as unknown as TUI;
 	let editorText = "main draft";
@@ -208,7 +214,7 @@ test("dedicated fullscreen owns the terminal while side custom UI runs and resto
 		"component.dispose",
 		"fullscreen.stop:true",
 		"parent.start",
-		"parent.render:true",
+		"parent.renderNow:false",
 	]);
 });
 
@@ -230,7 +236,7 @@ test("dedicated fullscreen restores the parent before propagating a side-flow er
 		"fullscreen.start",
 		"fullscreen.stop:true",
 		"parent.start",
-		"parent.render:true",
+		"parent.renderNow:false",
 	]);
 });
 
@@ -246,7 +252,7 @@ test("a fullscreen stop failure still restarts the parent before it propagates",
 		"fullscreen.start",
 		"fullscreen.stop:true",
 		"parent.start",
-		"parent.render:true",
+		"parent.renderNow:false",
 	]);
 });
 
@@ -314,4 +320,67 @@ test("disposal restores the parent and disposes a custom component whose factory
 	assert.equal(harness.events.filter((event) => event === "fullscreen.stop:true").length, 1);
 	assert.equal(harness.events.filter((event) => event === "parent.start").length, 1);
 	assert.equal(harness.events.filter((event) => event === "late-component.dispose").length, 1);
+});
+
+test("done wins over a later asynchronous custom factory rejection", async () => {
+	const harness = createHarness();
+	const running = runBtwFullscreen(
+		harness.ctx,
+		(ctx) =>
+			ctx.ui.custom((_tui, _theme, _keys, done) => {
+				done("completed result");
+				return Promise.reject(new Error("factory failed after done"));
+			}),
+		{ createTui: harness.createTui },
+	);
+
+	await flushAsyncWork();
+
+	assert.equal(await running, "completed result");
+	assert.equal(harness.events.filter((event) => event === "fullscreen.stop:true").length, 1);
+	assert.equal(harness.events.filter((event) => event === "parent.start").length, 1);
+});
+
+test("done restores the parent without waiting for an asynchronous custom factory", async () => {
+	const harness = createHarness();
+	let releaseFactory: ((component: FakeComponent) => void) | undefined;
+	const running = runBtwFullscreen(
+		harness.ctx,
+		(ctx) =>
+			ctx.ui.custom((_tui, _theme, _keys, done) => {
+				done("completed result");
+				return new Promise<FakeComponent>((resolve) => {
+					releaseFactory = resolve;
+				});
+			}),
+		{ createTui: harness.createTui },
+	);
+	let observed: unknown = "pending";
+	void running.then(
+		(value) => {
+			observed = value;
+		},
+		(error: unknown) => {
+			observed = error;
+		},
+	);
+
+	await flushAsyncWork();
+	assert.ok(releaseFactory);
+	const restoredBeforeFactorySettled = harness.events.includes("parent.start");
+	releaseFactory({
+		render: () => ["late"],
+		invalidate() {},
+		dispose() {
+			harness.events.push("late-after-done.dispose");
+		},
+	});
+	await flushAsyncWork();
+
+	assert.equal(restoredBeforeFactorySettled, true);
+	assert.equal(observed, "completed result");
+	assert.equal(await running, "completed result");
+	assert.equal(harness.events.filter((event) => event === "fullscreen.stop:true").length, 1);
+	assert.equal(harness.events.filter((event) => event === "parent.start").length, 1);
+	assert.equal(harness.events.filter((event) => event === "late-after-done.dispose").length, 1);
 });

@@ -153,7 +153,7 @@ class BtwFullscreenHost<T> implements Component {
 		if (parentStopped) {
 			try {
 				this.parent.start();
-				this.parent.requestRender(true);
+				this.parent.renderNow(false);
 			} catch (error) {
 				cleanupError ??= error;
 			}
@@ -207,6 +207,7 @@ class BtwFullscreenHost<T> implements Component {
 			let mounted = false;
 			let factorySettled = false;
 			let closed = false;
+			let promiseSettled = false;
 			let componentDisposed = false;
 			let pendingValue: Value | undefined;
 			let hasPendingValue = false;
@@ -221,38 +222,62 @@ class BtwFullscreenHost<T> implements Component {
 				}
 			};
 			const unmount = () => {
-				if (overlay) overlay.hide();
-				else if (mounted && component) fullscreen.removeChild(component);
+				let cleanupError: unknown;
+				try {
+					if (overlay) overlay.hide();
+					else if (mounted && component) fullscreen.removeChild(component);
+				} catch (error) {
+					cleanupError = error;
+				}
 				if (overlay || mounted) {
-					fullscreen.setFocus(null);
-					fullscreen.requestRender();
+					try {
+						fullscreen.setFocus(null);
+						fullscreen.requestRender();
+					} catch (error) {
+						cleanupError ??= error;
+					}
 				}
 				disposeComponent();
+				if (cleanupError !== undefined) throw cleanupError;
 			};
 			const complete = () => {
-				if (!factorySettled || !hasPendingValue) return;
-				unmount();
+				if (promiseSettled || !hasPendingValue) return;
+				promiseSettled = true;
 				this.cancelActiveCustom = undefined;
-				resolve(pendingValue as Value);
+				if (!factorySettled) {
+					resolve(pendingValue as Value);
+					return;
+				}
+				try {
+					unmount();
+					resolve(pendingValue as Value);
+				} catch (error) {
+					reject(error);
+				}
 			};
 			const close = (value: Value) => {
-				if (closed) return;
+				if (closed || promiseSettled) return;
 				closed = true;
 				pendingValue = value;
 				hasPendingValue = true;
 				complete();
 			};
 			const fail = (error: unknown) => {
-				if (closed) return;
+				if (promiseSettled) return;
 				closed = true;
-				unmount();
+				promiseSettled = true;
 				this.cancelActiveCustom = undefined;
-				reject(error);
+				try {
+					unmount();
+					reject(error);
+				} catch (cleanupError) {
+					reject(cleanupError);
+				}
 			};
 			this.cancelActiveCustom = () => {
-				if (closed) return;
+				if (promiseSettled) return;
 				disposeComponent();
-				if (!closed) fail(new FullscreenUiDisposedError());
+				if (!promiseSettled) fail(new FullscreenUiDisposedError());
 			};
 
 			let created: ReturnType<BtwCustomFactory<Value>>;
@@ -267,9 +292,12 @@ class BtwFullscreenHost<T> implements Component {
 				.then((value) => {
 					component = value;
 					factorySettled = true;
+					if (promiseSettled) {
+						disposeComponent();
+						return;
+					}
 					if (closed) {
-						if (hasPendingValue) complete();
-						else disposeComponent();
+						complete();
 						return;
 					}
 					if (options?.overlay) {
