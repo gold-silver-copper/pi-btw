@@ -103,26 +103,30 @@ export async function completeSideThreadTurn({
 	completeSimple,
 }: CompleteSideThreadTurnOptions): Promise<CompleteSideThreadTurnResult> {
 	if (signal?.aborted) return { kind: "aborted" };
-	let response: AssistantMessage;
 	try {
-		response = await completeSimple(
+		const response = await completeSimple(
 			model,
 			{ systemPrompt: SYSTEM_PROMPT, messages: buildSideThreadMessages(thread, question) },
 			buildStreamOptions(auth, thinkingLevel, signal),
 		);
+		if (signal?.aborted || response?.stopReason === "aborted") return { kind: "aborted" };
+		if (!isAssistantMessage(response)) {
+			return { kind: "error", message: "The side model returned a malformed response." };
+		}
+		if (response.stopReason === "error") {
+			return {
+				kind: "error",
+				message: response.errorMessage ?? "The side model returned an error.",
+			};
+		}
+
+		const answer = extractAssistantText(response) || "No response received.";
+		thread.turns.push({ kind: "answered", question, answer, response });
+		return { kind: "answered", response, answer };
 	} catch (error: unknown) {
 		if (signal?.aborted) return { kind: "aborted" };
 		return { kind: "error", message: formatError(error) };
 	}
-
-	if (signal?.aborted || response.stopReason === "aborted") return { kind: "aborted" };
-	if (response.stopReason === "error") {
-		return { kind: "error", message: response.errorMessage ?? "The side model returned an error." };
-	}
-
-	const answer = extractAssistantText(response) || "No response received.";
-	thread.turns.push({ kind: "answered", question, answer, response });
-	return { kind: "answered", response, answer };
 }
 
 export interface CompleteSideQuestionOptions {
@@ -156,10 +160,26 @@ export async function completeSideQuestion({
 
 export function extractAssistantText(response: AssistantMessage): string {
 	return response.content
-		.filter((content): content is { type: "text"; text: string } => content.type === "text")
+		.filter(
+			(content): content is { type: "text"; text: string } =>
+				content !== null &&
+				typeof content === "object" &&
+				content.type === "text" &&
+				typeof content.text === "string",
+		)
 		.map((content) => content.text)
 		.join("\n")
 		.trim();
+}
+
+function isAssistantMessage(value: unknown): value is AssistantMessage {
+	if (value === null || typeof value !== "object") return false;
+	const candidate = value as Partial<AssistantMessage>;
+	return (
+		candidate.role === "assistant" &&
+		Array.isArray(candidate.content) &&
+		typeof candidate.stopReason === "string"
+	);
 }
 
 export function buildUserPrompt(question: string, conversationContext: string): string {

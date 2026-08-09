@@ -31,6 +31,7 @@ import {
 	buildSideThreadMessages,
 	completeSideThreadTurn,
 	createSideThread,
+	extractAssistantText,
 	type SideThread,
 } from "../src/side-thread.js";
 import {
@@ -219,6 +220,34 @@ test("side thread discards a late successful response after cancellation", async
 
 	assert.deepEqual(await pending, { kind: "aborted" });
 	assert.deepEqual(thread.turns, []);
+});
+
+test("side thread turns malformed provider responses into visible errors", async () => {
+	for (const malformed of [null, { ...response("answer"), content: undefined }]) {
+		const thread = createSideThread("context");
+		const result = await completeSideThreadTurn({
+			thread,
+			question: "handle malformed response",
+			model: { provider: "test", id: "side" } as Model<Api>,
+			auth: { apiKey: "key" },
+			thinkingLevel: "off",
+			completeSimple: async () => malformed as never,
+		});
+
+		assert.equal(result.kind, "error");
+		assert.match(result.kind === "error" ? result.message : "", /malformed response/i);
+		assert.deepEqual(thread.turns, []);
+	}
+});
+
+test("assistant text extraction ignores malformed content blocks", () => {
+	assert.equal(
+		extractAssistantText({
+			...response("unused"),
+			content: [null, { type: "text", text: 42 }, { type: "text", text: "valid answer" }],
+		} as never),
+		"valid answer",
+	);
 });
 
 test("side thread does not record aborted completions", async () => {
