@@ -25,6 +25,7 @@ import {
 	getAnsweredTurns,
 	summarizeBringToMain,
 } from "./bring-to-main.js";
+import { type RunBtwFullscreen, runBtwFullscreen } from "./fullscreen-ui.js";
 import {
 	type BtwCommandMenuResult,
 	runBtwMenuPreservingEditor,
@@ -213,6 +214,7 @@ export interface BtwExtensionDependencies {
 	loadSettings?: typeof loadSettingsForCommand;
 	resolveModel?: typeof resolveBtwModelWithLoader;
 	runThread?: typeof runBtwThread;
+	runFullscreen?: RunBtwFullscreen;
 }
 
 export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependencies = {}) {
@@ -220,6 +222,7 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
 	const loadSettings = dependencies.loadSettings ?? loadSettingsForCommand;
 	const resolveModel = dependencies.resolveModel ?? resolveBtwModelWithLoader;
 	const runThread = dependencies.runThread ?? runBtwThread;
+	const runFullscreen = dependencies.runFullscreen ?? runBtwFullscreen;
 	pi.registerCommand("btw", {
 		description: "Ask a quick side question without adding it to the main conversation",
 		handler: async (args, ctx) => {
@@ -241,13 +244,15 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
 				return;
 			}
 
-			await runThread({
-				initialQuestion: question || undefined,
-				selected: resolution.selected,
-				thinkingLevel: settings.thinkingLevel ?? pi.getThinkingLevel(),
-				rememberThinkingLevelChanges: effectiveRememberThinkingLevelChanges(settings),
-				ctx,
-			});
+			await runFullscreen(ctx, (fullscreenCtx) =>
+				runThread({
+					initialQuestion: question || undefined,
+					selected: resolution.selected,
+					thinkingLevel: settings.thinkingLevel ?? pi.getThinkingLevel(),
+					rememberThinkingLevelChanges: effectiveRememberThinkingLevelChanges(settings),
+					ctx: fullscreenCtx,
+				}),
+			);
 		},
 	});
 }

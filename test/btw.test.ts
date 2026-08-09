@@ -347,6 +347,7 @@ test("btw command routes no arguments through the menu and preserves direct ques
 		auth: { apiKey: "key" },
 	};
 	const menuCalls: string[] = [];
+	let fullscreenRuns = 0;
 	const threadStarts: Array<{
 		initialQuestion?: string;
 		thinkingLevel: string;
@@ -359,6 +360,10 @@ test("btw command routes no arguments through the menu and preserves direct ques
 		},
 		loadSettings: async () => ({ thinkingLevel: "medium" }),
 		resolveModel: async () => ({ kind: "selected", selected }),
+		runFullscreen: async (ctx, run) => {
+			fullscreenRuns += 1;
+			return run(ctx);
+		},
 		runThread: async (options) => {
 			threadStarts.push({
 				initialQuestion: options.initialQuestion,
@@ -370,12 +375,21 @@ test("btw command routes no arguments through the menu and preserves direct ques
 	});
 	const command = mock.commands.get("btw");
 	assert.ok(command);
-	const interactive = createMockContext({ mode: "tui", hasUI: true });
+	let idleWaits = 0;
+	const interactive = createMockContext({
+		mode: "tui",
+		hasUI: true,
+		waitForIdle: async () => {
+			idleWaits += 1;
+		},
+	});
 
 	await command.handler("", interactive.ctx);
 	await command.handler("direct question", interactive.ctx);
 
 	assert.deepEqual(menuCalls, ["menu"]);
+	assert.equal(fullscreenRuns, 2);
+	assert.equal(idleWaits, 0);
 	assert.deepEqual(threadStarts, [
 		{
 			initialQuestion: undefined,

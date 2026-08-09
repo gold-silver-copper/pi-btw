@@ -10,7 +10,8 @@ Use it when you want to ask a temporary question, inspect context, or get a shor
 
 - Adds a `/btw` menu for starting a side thread or changing pi-btw settings.
 - Keeps `/btw <question>` as a direct fast path.
-- Answers side questions in a temporary, scrollable UI.
+- Answers side questions in a dedicated, scrollable full-screen UI.
+- Keeps mouse-drag copying stable while the main agent continues running in the background.
 - Supports follow-up questions in the same ephemeral side thread.
 - Optionally brings the latest answer, a question-to-end suffix, an exact line range, or the entire side thread into the main editor.
 - Uses the current session branch as context.
@@ -58,8 +59,13 @@ Examples:
 Running `/btw` alone opens a two-row menu. **Start side thread** is selected first, so pressing
 `Enter` opens an empty ephemeral side thread; **Settings** changes the starting thinking level
 and whether shortcut changes are remembered. `/btw <question>` bypasses this menu, and its answer
-opens above the side-thread editor. A compact `btw · side thread` header stays fixed above the
-content so the ephemeral workspace remains recognizable while scrolling. Messages use Pi's normal
+opens above the side-thread editor. The side thread uses a dedicated full-screen terminal view.
+The main agent continues running in the background, but its screen rendering stays suspended until
+`/btw` closes, so new main-thread output cannot move a mouse selection inside the side thread.
+Drag the primary mouse button across side-thread text to select and copy it through Pi's terminal
+clipboard support. Returning from `/btw` redraws the main view with everything produced while it
+was hidden. A compact `btw · side thread` header stays fixed above the content so the ephemeral
+workspace remains recognizable while scrolling. Messages use Pi's normal
 user and assistant presentation without numbered turns or role labels. Type each question and press
 `Enter`; no follow-up shortcut is required.
 Previous side questions and answers remain available to the model and visible for that
