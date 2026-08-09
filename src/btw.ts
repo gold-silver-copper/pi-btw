@@ -341,6 +341,12 @@ export type BtwThreadResult = { kind: "closed" };
 
 type BtwThreadThinkingControl = Omit<BtwThinkingControl, "keybindings">;
 
+interface BtwThreadSteeringControl {
+	questions: readonly string[];
+	submit: (question: string) => void;
+	thinking: BtwThreadThinkingControl;
+}
+
 type BtwBringToMainChoice =
 	| BtwThreadResult
 	| {
@@ -382,41 +388,42 @@ export async function runBtwThread({
 	const thread = createSideThread(buildConversationContext(ctx.sessionManager.getBranch()));
 	const thinkingLevels = getSupportedThinkingLevels(selected.model);
 	const pendingWrites = new Set<Promise<void>>();
+	const steeringQuestions: string[] = [];
 	let activeThinkingLevel = clampThinkingLevel(selected.model, thinkingLevel);
 	let pendingQuestion = initialQuestion;
 	let composerDraft: string | undefined;
+	const createThinkingControl = (): BtwThreadThinkingControl => ({
+		level: activeThinkingLevel,
+		levels: thinkingLevels,
+		onChange: (level) => {
+			if (!thinkingLevels.includes(level)) return;
+			activeThinkingLevel = level;
+			if (!rememberThinkingLevelChanges) return;
+			let write!: Promise<void>;
+			write = Promise.resolve()
+				.then(() => persistThinkingLevel(level))
+				.then(() => undefined)
+				.catch((error: unknown) => {
+					notifySafely(
+						ctx,
+						`Thinking level changed to ${level}, but could not be remembered in pi-btw.json: ${formatError(error)}`,
+						"warning",
+					);
+				})
+				.finally(() => pendingWrites.delete(write));
+			pendingWrites.add(write);
+		},
+	});
 
 	try {
 		while (true) {
 			if (!pendingQuestion) {
-				const thinking: BtwThreadThinkingControl = {
-					level: activeThinkingLevel,
-					levels: thinkingLevels,
-					onChange: (level) => {
-						if (!thinkingLevels.includes(level)) return;
-						activeThinkingLevel = level;
-						if (!rememberThinkingLevelChanges) return;
-						let write!: Promise<void>;
-						write = Promise.resolve()
-							.then(() => persistThinkingLevel(level))
-							.then(() => undefined)
-							.catch((error: unknown) => {
-								notifySafely(
-									ctx,
-									`Thinking level changed to ${level}, but could not be remembered in pi-btw.json: ${formatError(error)}`,
-									"warning",
-								);
-							})
-							.finally(() => pendingWrites.delete(write));
-						pendingWrites.add(write);
-					},
-				};
 				const action = await interact(
 					thread,
 					thread.turns.length > 0,
 					ctx,
 					composerDraft,
-					thinking,
+					createThinkingControl(),
 				);
 				if (action.kind === "close") return { kind: "closed" };
 				if (action.kind === "bringToMain") {
@@ -435,7 +442,11 @@ export async function runBtwThread({
 				pendingQuestion = action.question;
 			}
 
-			const result = await ask(thread, pendingQuestion, selected, activeThinkingLevel, ctx);
+			const result = await ask(thread, pendingQuestion, selected, activeThinkingLevel, ctx, {
+				questions: steeringQuestions,
+				submit: (question) => steeringQuestions.push(question),
+				thinking: createThinkingControl(),
+			});
 			if (result.kind === "aborted") {
 				notifySafely(ctx, "Cancelled", "info");
 				return { kind: "closed" };
@@ -448,7 +459,7 @@ export async function runBtwThread({
 				});
 			}
 
-			pendingQuestion = undefined;
+			pendingQuestion = steeringQuestions.shift();
 		}
 	} finally {
 		await Promise.allSettled([...pendingWrites]);
@@ -771,9 +782,10 @@ async function askThreadQuestion(
 	selected: ResolvedBtwModel,
 	thinkingLevel: BtwThinkingLevel,
 	ctx: ExtensionCommandContext,
+	steering: BtwThreadSteeringControl,
 ) {
 	return ctx.ui.custom<Awaited<ReturnType<typeof completeSideThreadTurn>>>(
-		(tui, theme, _keybindings, done) => {
+		(tui, theme, keybindings, done) => {
 			let settled = false;
 			const view = new BtwAnsweringView(
 				tui,
@@ -786,6 +798,13 @@ async function askThreadQuestion(
 					done({ kind: "aborted" });
 				},
 				thinkingLevel,
+				{
+					steering: {
+						questions: steering.questions,
+						onSubmit: steering.submit,
+						thinking: { ...steering.thinking, keybindings },
+					},
+				},
 			);
 			completeSideThreadTurn({
 				thread,

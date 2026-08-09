@@ -2506,3 +2506,257 @@ test("transcript composer submits typed questions by default and only Ctrl+C clo
 
 	assert.deepEqual(actions, [{ kind: "submit", question: "qf" }, { kind: "close" }]);
 });
+
+test("side-thread steering drains queued questions one at a time before reopening the composer", async () => {
+	const branch = [{ type: "message", message: { role: "user", content: "main" } }];
+	const questions: string[] = [];
+	const thinkingLevels: string[] = [];
+	let interactions = 0;
+	const result = await runBtwThread({
+		initialQuestion: "Q1",
+		selected: {
+			model: { provider: "test", id: "side", reasoning: true } as Model<Api>,
+			auth: { apiKey: "key" },
+		},
+		thinkingLevel: "low",
+		ctx: {
+			ui: { notify() {} },
+			sessionManager: { getBranch: () => branch },
+		} as never,
+		dependencies: {
+			ask: (async (
+				thread: SideThread,
+				question: string,
+				_selected: ResolvedBtwModel,
+				thinkingLevel: string,
+				_ctx: unknown,
+				steering: {
+					submit(question: string): void;
+					thinking: { onChange(level: "high"): void };
+				},
+			) => {
+				questions.push(question);
+				thinkingLevels.push(thinkingLevel);
+				if (question === "Q1") {
+					steering.submit("Q2");
+					steering.submit("Q3");
+					steering.thinking.onChange("high");
+				}
+				const assistant = response(`A${questions.length}`);
+				thread.turns.push({
+					kind: "answered",
+					question,
+					answer: `A${questions.length}`,
+					response: assistant,
+				});
+				return {
+					kind: "answered",
+					response: assistant,
+					answer: `A${questions.length}`,
+				};
+			}) as never,
+			interact: async () => {
+				interactions += 1;
+				return { kind: "close" };
+			},
+		},
+	});
+
+	assert.deepEqual(result, { kind: "closed" });
+	assert.deepEqual(questions, ["Q1", "Q2", "Q3"]);
+	assert.deepEqual(thinkingLevels, ["low", "high", "high"]);
+	assert.equal(interactions, 1);
+	assert.deepEqual(branch, [{ type: "message", message: { role: "user", content: "main" } }]);
+});
+
+test("side-thread steering continues after the active answer fails", async () => {
+	const asked: string[] = [];
+	let interactions = 0;
+	const result = await runBtwThread({
+		initialQuestion: "Q1",
+		selected: {
+			model: { provider: "test", id: "side" } as Model<Api>,
+			auth: { apiKey: "key" },
+		},
+		thinkingLevel: "off",
+		ctx: {
+			ui: { notify() {} },
+			sessionManager: { getBranch: () => [] },
+		} as never,
+		dependencies: {
+			ask: (async (
+				thread: SideThread,
+				question: string,
+				_selected: ResolvedBtwModel,
+				_level: string,
+				_ctx: unknown,
+				steering: { submit(question: string): void },
+			) => {
+				asked.push(question);
+				if (question === "Q1") {
+					steering.submit("recover with Q2");
+					return { kind: "error", message: "first answer failed" };
+				}
+				const assistant = response("recovered");
+				thread.turns.push({
+					kind: "answered",
+					question,
+					answer: "recovered",
+					response: assistant,
+				});
+				return { kind: "answered", response: assistant, answer: "recovered" };
+			}) as never,
+			interact: async () => {
+				interactions += 1;
+				return { kind: "close" };
+			},
+		},
+	});
+
+	assert.deepEqual(result, { kind: "closed" });
+	assert.deepEqual(asked, ["Q1", "recover with Q2"]);
+	assert.equal(interactions, 1);
+});
+
+test("cancelling an active answer discards its side-thread steering queue", async () => {
+	const asked: string[] = [];
+	let interactions = 0;
+	const result = await runBtwThread({
+		initialQuestion: "Q1",
+		selected: {
+			model: { provider: "test", id: "side" } as Model<Api>,
+			auth: { apiKey: "key" },
+		},
+		thinkingLevel: "off",
+		ctx: {
+			ui: { notify() {} },
+			sessionManager: { getBranch: () => [] },
+		} as never,
+		dependencies: {
+			ask: (async (
+				_thread: SideThread,
+				question: string,
+				_selected: ResolvedBtwModel,
+				_level: string,
+				_ctx: unknown,
+				steering: { submit(question: string): void },
+			) => {
+				asked.push(question);
+				steering.submit("must be discarded");
+				return { kind: "aborted" };
+			}) as never,
+			interact: async () => {
+				interactions += 1;
+				return { kind: "close" };
+			},
+		},
+	});
+
+	assert.deepEqual(result, { kind: "closed" });
+	assert.deepEqual(asked, ["Q1"]);
+	assert.equal(interactions, 0);
+});
+
+test("answering view accepts Pi-style steering while preserving IME focus and expanded paste", () => {
+	initTheme("dark");
+	const queued: string[] = [];
+	const changes: string[] = [];
+	const tui = { terminal: { rows: 24 }, requestRender() {} };
+	const theme = {
+		fg(_color: string, text: string) {
+			return text;
+		},
+		bold(text: string) {
+			return text;
+		},
+	};
+	const view = new BtwAnsweringView(
+		tui as never,
+		theme as never,
+		[],
+		"Current question",
+		() => undefined,
+		"low",
+		{
+			steering: {
+				questions: queued,
+				onSubmit: (question) => queued.push(question),
+				thinking: {
+					level: "low",
+					levels: ["low", "high"],
+					keybindings: keybindings({ "app.thinking.cycle": "t" }) as never,
+					onChange: (level) => changes.push(level),
+				},
+			},
+		},
+	);
+	try {
+		view.focused = true;
+		assert.equal(view.render(80).join("\n").includes(CURSOR_MARKER), true);
+		const pasted = "steering paste ".repeat(100);
+		view.handleInput(`\u001b[200~${pasted}\u001b[201~`);
+		view.handleInput("\r");
+		view.handleInput("second steering");
+		view.handleInput("\r");
+		view.handleInput("t");
+
+		assert.deepEqual(queued, [pasted.trim(), "second steering"]);
+		assert.deepEqual(changes, ["high"]);
+		const rendered = view.render(100).join("\n");
+		assert.match(rendered, /Steering: steering paste/);
+		assert.ok(rendered.indexOf("steering paste") < rendered.indexOf("second steering"));
+		assert.match(rendered, /Answering….*Enter steer.*Ctrl\+C cancel/);
+		assert.match(rendered, /thinking high/i);
+	} finally {
+		view.dispose();
+	}
+});
+
+test("answering steering rejects blank questions and bounds unsafe queue display", () => {
+	initTheme("dark");
+	const queued = [
+		"first\u001b]52;c;ZXZpbA==\u0007 steering",
+		"second steering",
+		"third steering",
+		"fourth steering",
+	];
+	let cancelled = 0;
+	const tui = { terminal: { rows: 9 }, requestRender() {} };
+	const theme = {
+		fg(_color: string, text: string) {
+			return text;
+		},
+		bold(text: string) {
+			return text;
+		},
+	};
+	const view = new BtwAnsweringView(
+		tui as never,
+		theme as never,
+		[],
+		"Current question",
+		() => {
+			cancelled += 1;
+		},
+		"off",
+		{
+			steering: {
+				questions: queued,
+				onSubmit: (question) => queued.push(question),
+			},
+		},
+	);
+	view.focused = true;
+	view.handleInput("   ");
+	view.handleInput("\r");
+	const rendered = view.render(28);
+	assert.match(rendered.join("\n"), /cannot be empty|Empty/i);
+	assert.equal(rendered.join("\n").includes("\u001b]52"), false);
+	assert.match(rendered.join("\n"), /more/i);
+	assert.ok(rendered.every((line) => visibleWidth(line) <= 28));
+	assert.ok(rendered.length <= tui.terminal.rows - 3);
+	view.handleInput("\u0003");
+	view.dispose();
+	assert.equal(cancelled, 1);
+	assert.equal(view.signal.aborted, true);
+});

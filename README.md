@@ -13,6 +13,7 @@ Use it when you want to ask a temporary question, inspect context, or get a shor
 - Answers side questions in a dedicated, scrollable full-screen UI.
 - Keeps mouse-drag copying stable while the main agent continues running in the background.
 - Supports follow-up questions in the same ephemeral side thread.
+- Queues Pi-style `Steering` questions while an answer is running and processes them one at a time.
 - Optionally brings the latest answer, a question-to-end suffix, an exact line range, or the entire side thread into the main editor.
 - Uses the current session branch as context.
 - Uses Pi's current model or an independent model selected in `pi-btw.json`.
@@ -74,10 +75,16 @@ invocation. The side-thread header shows its current thinking level. Press Pi's 
 supported by the side-thread model; every later question uses the displayed level until it is
 changed again. By default, each shortcut change is also written to `pi-btw.json` for the next
 invocation. Turn **Remember thinking level changes** off in Settings to keep changes local to the
-current side thread. Neither path changes the main session's thinking level. While a response is
-running, the transcript stays visible above a compact `Answering…` status.
-The footer shows `PgUp`/`PgDn` only when history can scroll; press `Ctrl+C` to cancel an
-in-progress answer or leave the side thread.
+current side thread. Neither path changes the main session's thinking level.
+While a response is running, the transcript and composer remain visible above an `Answering…`
+status.
+Type another question and press `Enter` to queue it as `Steering`; queued questions are shown in
+submission order and answered one at a time after the active response completes.
+A queued question uses the side thread's thinking level when its turn begins.
+A failed active response is shown in the transcript and does not discard later steering questions.
+The footer shows `PgUp`/`PgDn` only when history can scroll; press `Ctrl+C` to cancel the active
+response and discard the ephemeral side-thread draft and steering queue.
+Steering remains entirely inside pi-btw and never appends to the main conversation or editor.
 
 After at least one successful answer, press `Ctrl+R` to bring selected context to the main
 editor. The scope menu shows the size of the latest question and answer and the entire side

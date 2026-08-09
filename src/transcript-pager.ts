@@ -11,6 +11,7 @@ import {
 	CURSOR_MARKER,
 	Editor,
 	type EditorTheme,
+	type Focusable,
 	Key,
 	Loader,
 	Markdown,
@@ -23,6 +24,7 @@ import type { BtwThinkingLevel, SideThreadTurn } from "./side-thread.js";
 import { sanitizeSingleLine } from "./text.js";
 
 const TRANSCRIPT_CHROME_LINES = 2;
+const MAX_STEERING_DISPLAY_LINES = 3;
 const OSC133_MARKERS = ["\u001b]133;A\u0007", "\u001b]133;B\u0007", "\u001b]133;C\u0007"];
 // Pi renders a spacer above the custom component and a two-line built-in footer below it.
 const RESERVED_APP_LINES = 3;
@@ -39,7 +41,15 @@ export interface BtwThinkingControl {
 	onChange: (level: BtwThinkingLevel) => void;
 }
 
-export class BtwTranscriptPager implements Component {
+export interface BtwAnsweringViewOptions {
+	steering?: {
+		questions: readonly string[];
+		onSubmit: (question: string) => void;
+		thinking?: BtwThinkingControl;
+	};
+}
+
+export class BtwTranscriptPager implements Component, Focusable {
 	private readonly transcriptComponents: Component[];
 	private readonly editor: Editor;
 	private readonly canBringToMain: boolean;
@@ -242,15 +252,19 @@ export class BtwTranscriptPager implements Component {
 	}
 }
 
-export class BtwAnsweringView implements Component {
+export class BtwAnsweringView implements Component, Focusable {
 	private readonly transcriptComponents: Component[];
 	private readonly loader: Loader;
+	private readonly editor: Editor | undefined;
 	private readonly controller = new AbortController();
 	private scrollOffset = 0;
 	private lastContentLineCount = 0;
 	private lastViewportHeight = 1;
 	private followBottom = true;
+	private warning: string | undefined;
 	private finished = false;
+	private isFocused = false;
+	private thinkingLevel: BtwThinkingLevel | undefined;
 
 	constructor(
 		private readonly tui: TUI,
@@ -258,15 +272,51 @@ export class BtwAnsweringView implements Component {
 		turns: readonly SideThreadTurn[],
 		pendingQuestion: string,
 		private readonly onCancel: () => void,
-		private readonly thinkingLevel?: BtwThinkingLevel,
+		thinkingLevel?: BtwThinkingLevel,
+		private readonly options: BtwAnsweringViewOptions = {},
 	) {
 		this.transcriptComponents = buildTranscriptComponents(turns, this.theme, pendingQuestion);
+		this.thinkingLevel = options.steering?.thinking?.level ?? thinkingLevel;
 		this.loader = new Loader(
 			this.tui,
 			(text) => this.theme.fg("accent", text),
 			(text) => this.theme.fg("muted", text),
 			"Answering…",
 		);
+		if (options.steering) {
+			const editorTheme: EditorTheme = {
+				borderColor: (text) => this.theme.fg("accent", text),
+				selectList: {
+					selectedPrefix: (text) => this.theme.fg("accent", text),
+					selectedText: (text) => this.theme.fg("accent", text),
+					description: (text) => this.theme.fg("muted", text),
+					scrollInfo: (text) => this.theme.fg("dim", text),
+					noMatch: (text) => this.theme.fg("warning", text),
+				},
+			};
+			this.editor = new Editor(this.tui, editorTheme);
+			this.editor.onChange = () => {
+				this.warning = undefined;
+			};
+			this.editor.onSubmit = (text) => {
+				const question = text.trim();
+				if (!question) {
+					this.warning = "Question cannot be empty";
+					return;
+				}
+				options.steering?.onSubmit(question);
+				this.warning = undefined;
+			};
+		}
+	}
+
+	get focused(): boolean {
+		return this.isFocused;
+	}
+
+	set focused(value: boolean) {
+		this.isFocused = value;
+		if (this.editor) this.editor.focused = value;
 	}
 
 	get signal(): AbortSignal {
@@ -276,21 +326,35 @@ export class BtwAnsweringView implements Component {
 	render(width: number): string[] {
 		const safeWidth = Math.max(1, width);
 		const availableRows = Math.max(1, this.tui.terminal.rows - RESERVED_APP_LINES);
-		const viewportHeight = Math.max(0, availableRows - TRANSCRIPT_CHROME_LINES);
+		const editorLines = this.editor?.render(safeWidth) ?? [];
+		const steeringCapacity = Math.max(
+			0,
+			availableRows - editorLines.length - TRANSCRIPT_CHROME_LINES,
+		);
+		const steeringLines = renderSteeringLines(
+			this.options.steering?.questions ?? [],
+			safeWidth,
+			this.theme,
+			Math.min(MAX_STEERING_DISPLAY_LINES, steeringCapacity),
+		);
+		const viewportHeight = Math.max(
+			0,
+			availableRows - editorLines.length - TRANSCRIPT_CHROME_LINES - steeringLines.length,
+		);
 		const contentLines = renderTranscriptLines(this.transcriptComponents, safeWidth);
 		this.lastContentLineCount = contentLines.length;
 		this.lastViewportHeight = viewportHeight;
 		if (this.followBottom) this.scrollOffset = this.getMaxScrollOffset();
 		this.clampScrollOffset();
-		const cancelHint = safeWidth < 28 ? "Ctrl+C" : "Ctrl+C cancel";
-		const loaderWidth = Math.max(1, safeWidth - visibleWidth(cancelHint) - 3);
-		const loaderLine = this.loader.render(loaderWidth).at(-1) ?? "Answering…";
-		const lines = [
+
+		return fitComposerLayout(
 			renderSideThreadHeader(safeWidth, this.theme, this.thinkingLevel),
-			...contentLines.slice(this.scrollOffset, this.scrollOffset + viewportHeight),
-			truncateToWidth(`${loaderLine} • ${this.theme.fg("muted", cancelHint)}`, safeWidth),
-		];
-		return fitWithFixedHeader(lines, availableRows);
+			contentLines.slice(this.scrollOffset, this.scrollOffset + viewportHeight),
+			this.renderFooter(safeWidth),
+			editorLines,
+			availableRows,
+			steeringLines,
+		);
 	}
 
 	handleInput(data: string): void {
@@ -302,21 +366,43 @@ export class BtwAnsweringView implements Component {
 			this.onCancel();
 			return;
 		}
+		const thinking = this.options.steering?.thinking;
+		if (
+			thinking &&
+			thinking.levels.length > 1 &&
+			thinking.keybindings.matches(data, "app.thinking.cycle")
+		) {
+			const currentIndex = thinking.levels.indexOf(this.thinkingLevel ?? thinking.level);
+			const nextLevel = thinking.levels[(currentIndex + 1) % thinking.levels.length];
+			if (nextLevel) {
+				this.thinkingLevel = nextLevel;
+				thinking.onChange(nextLevel);
+				this.warning = undefined;
+				this.tui.requestRender();
+			}
+			return;
+		}
 		if (matchesKey(data, Key.pageUp)) {
 			const previousOffset = this.scrollOffset;
 			this.scrollBy(-this.lastViewportHeight);
 			if (this.scrollOffset < previousOffset) this.followBottom = false;
 			this.tui.requestRender();
-		} else if (matchesKey(data, Key.pageDown)) {
+			return;
+		}
+		if (matchesKey(data, Key.pageDown)) {
 			this.scrollBy(this.lastViewportHeight);
 			this.followBottom = this.scrollOffset >= this.getMaxScrollOffset();
 			this.tui.requestRender();
+			return;
 		}
+		this.editor?.handleInput(data);
+		this.tui.requestRender();
 	}
 
 	invalidate(): void {
 		for (const component of this.transcriptComponents) component.invalidate();
 		this.loader.invalidate();
+		this.editor?.invalidate();
 	}
 
 	finish(): void {
@@ -334,6 +420,26 @@ export class BtwAnsweringView implements Component {
 		this.loader.stop();
 		this.controller.abort();
 		this.onCancel();
+	}
+
+	private renderFooter(width: number): string {
+		if (this.warning) {
+			const warning = width < 32 ? "Empty • Ctrl+C" : `${this.warning} • Ctrl+C cancel`;
+			return truncateToWidth(this.theme.fg("warning", warning), width);
+		}
+		const baseHint = this.editor ? "Enter steer • Ctrl+C cancel" : "Ctrl+C cancel";
+		const thinking = this.options.steering?.thinking;
+		const cycleHint =
+			thinking && thinking.levels.length > 1 && this.thinkingLevel
+				? ` • thinking ${this.thinkingLevel} • ${thinkingKeyLabel(thinking.keybindings)} cycle`
+				: "";
+		const scrollHint = this.getMaxScrollOffset() > 0 ? " • PgUp/PgDn history" : "";
+		const hints = `${baseHint}${cycleHint}${scrollHint}`;
+		const compactHints = this.editor ? "Enter • Ctrl+C" : "Ctrl+C";
+		const selectedHints = visibleWidth(hints) <= width ? hints : compactHints;
+		const loaderWidth = Math.max(1, width - visibleWidth(selectedHints) - 3);
+		const loaderLine = this.loader.render(loaderWidth).at(-1) ?? "Answering…";
+		return truncateToWidth(`${loaderLine} • ${this.theme.fg("muted", selectedHints)}`, width);
 	}
 
 	private scrollBy(delta: number): void {
@@ -439,8 +545,9 @@ function fitComposerLayout(
 	footer: string,
 	editorLines: string[],
 	availableRows: number,
+	statusLines: string[] = [],
 ): string[] {
-	const lines = [header, ...contentLines, footer, ...editorLines];
+	const lines = [header, ...contentLines, ...statusLines, footer, ...editorLines];
 	if (lines.length <= availableRows) return lines;
 	if (availableRows <= 1) return [header];
 	const editorBudget = Math.max(0, availableRows - 2);
@@ -456,10 +563,42 @@ function fitEditorLines(editorLines: string[], budget: number): string[] {
 	return editorLines.slice(start, start + budget);
 }
 
-function fitWithFixedHeader(lines: string[], availableRows: number): string[] {
-	if (lines.length <= availableRows) return lines;
-	if (availableRows <= 1) return lines.slice(0, 1);
-	return [lines[0] ?? "", ...lines.slice(lines.length - availableRows + 1)];
+function renderSteeringLines(
+	questions: readonly string[],
+	width: number,
+	theme: Theme,
+	maxLines: number,
+): string[] {
+	if (questions.length === 0 || maxLines <= 0) return [];
+	const formatQuestion = (question: string) =>
+		sanitizeSingleLine(question) || "(non-printing message)";
+	if (maxLines === 1 && questions.length > 1) {
+		return [
+			truncateToWidth(
+				theme.fg(
+					"dim",
+					`Steering (+${questions.length - 1} more): ${formatQuestion(questions[0] ?? "")}`,
+				),
+				width,
+			),
+		];
+	}
+	const hasOverflow = questions.length > maxLines;
+	const questionLimit = hasOverflow ? Math.max(1, maxLines - 1) : maxLines;
+	const lines = questions
+		.slice(0, questionLimit)
+		.map((question) =>
+			truncateToWidth(theme.fg("dim", `Steering: ${formatQuestion(question)}`), width),
+		);
+	if (hasOverflow) {
+		lines.push(
+			truncateToWidth(
+				theme.fg("dim", `Steering: … +${questions.length - questionLimit} more`),
+				width,
+			),
+		);
+	}
+	return lines;
 }
 
 function stripShellIntegrationMarkers(line: string): string {
