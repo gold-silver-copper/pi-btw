@@ -188,6 +188,82 @@ test("default fullscreen enables application-owned mouse selection and restores 
 	}
 });
 
+test("default fullscreen activates OSC-8 links through the configured URL opener", async () => {
+	let handleInput: ((data: string) => void) | undefined;
+	const terminal = {
+		columns: 80,
+		rows: 24,
+		start(onInput: (data: string) => void) {
+			handleInput = onInput;
+		},
+		stop() {},
+		write() {},
+		hideCursor() {},
+		showCursor() {},
+	} as never;
+	const parent = {
+		mode: "regular",
+		terminal,
+		getShowHardwareCursor: () => false,
+		stop() {},
+		start() {},
+		renderNow() {},
+		requestRender() {},
+	} as unknown as TUI;
+	let outerDone: ((value: unknown) => void) | undefined;
+	let editorText = "main draft";
+	const ctx = {
+		ui: {
+			custom: async (factory: (...args: never[]) => FakeComponent) => {
+				const result = new Promise<unknown>((resolve) => {
+					outerDone = resolve;
+				});
+				factory(
+					parent as never,
+					{ fg: (_color: string, text: string) => text } as never,
+					{} as never,
+					((value: unknown) => outerDone?.(value)) as never,
+				);
+				return result;
+			},
+			getEditorText: () => editorText,
+			setEditorText: (value: string) => {
+				editorText = value;
+			},
+		},
+	} as never;
+	const url = "https://example.com/docs";
+	const opened: string[] = [];
+	let sideTui: TUI | undefined;
+	let closeSide: (() => void) | undefined;
+	const running = runBtwFullscreen(
+		ctx,
+		(fullscreenCtx) =>
+			fullscreenCtx.ui.custom<"closed">((tui, _theme, _keys, done) => {
+				sideTui = tui;
+				closeSide = () => done("closed");
+				return {
+					render: () => [`\u001b]8;;${url}\u0007documentation\u001b]8;;\u0007`],
+					invalidate() {},
+					dispose() {},
+				};
+			}),
+		{ openUrl: (target: string) => opened.push(target) },
+	);
+	await flushAsyncWork();
+	assert.ok(sideTui);
+	assert.ok(handleInput);
+	assert.ok(closeSide);
+	sideTui.renderNow(true);
+	handleInput("\u001b[<0;1;1M");
+	handleInput("\u001b[<0;1;1m");
+	const openedBeforeClose = [...opened];
+	closeSide();
+
+	assert.equal(await running, "closed");
+	assert.deepEqual(openedBeforeClose, [url]);
+});
+
 test("dedicated fullscreen owns the terminal while side custom UI runs and restores it afterward", async () => {
 	const harness = createHarness();
 	const result = await runBtwFullscreen(

@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import type {
 	ExtensionCommandContext,
 	KeybindingsManager,
@@ -26,6 +27,7 @@ export type BtwFullscreenTuiFactory = (parent: TUI) => BtwFullscreenTui;
 
 export interface BtwFullscreenDependencies {
 	createTui?: BtwFullscreenTuiFactory;
+	openUrl?: (url: string) => void;
 }
 
 export type RunBtwFullscreen = <T>(
@@ -47,7 +49,9 @@ export async function runBtwFullscreen<T>(
 	run: (ctx: ExtensionCommandContext) => Promise<T>,
 	dependencies: BtwFullscreenDependencies = {},
 ): Promise<T> {
-	const createTui = dependencies.createTui ?? createBtwFullscreenTui;
+	const createTui =
+		dependencies.createTui ??
+		((parent: TUI) => createBtwFullscreenTui(parent, dependencies.openUrl ?? openUrlInBrowser));
 	let liveEditorText = ctx.ui.getEditorText();
 	let restoreEditor = false;
 	const outcome = await ctx.ui.custom<FullscreenOutcome<T>>(
@@ -81,10 +85,24 @@ export async function runBtwFullscreen<T>(
 	return outcome.value;
 }
 
-function createBtwFullscreenTui(parent: TUI): BtwFullscreenTui {
+function createBtwFullscreenTui(parent: TUI, openUrl: (url: string) => void): BtwFullscreenTui {
 	return new TuiAltScreen(parent.terminal, parent.getShowHardwareCursor(), undefined, {
 		mouse: true,
+		openUrl,
 	});
+}
+
+// Pi does not export its browser opener, so mirror its shell-free launcher for this isolated TUI.
+function openUrlInBrowser(target: string): void {
+	const [command, args] =
+		process.platform === "darwin"
+			? ["open", [target]]
+			: process.platform === "win32"
+				? ["rundll32", ["url.dll,FileProtocolHandler", target]]
+				: ["xdg-open", [target]];
+	spawn(command, args, { stdio: "ignore", detached: true })
+		.on("error", () => {})
+		.unref();
 }
 
 class BtwFullscreenHost<T> implements Component {
