@@ -1,5 +1,11 @@
 # @narumitw/pi-btw
 
+## 0.50.0
+
+### Minor Changes
+
+- be8d492: Add an in-memory Resume picker to `/btw` so the current Pi session can continue any non-empty side thread by its first question while `/btw <question>` remains a fresh-thread fast path.
+
 ## 0.49.7
 
 ### Patch Changes
