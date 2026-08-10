@@ -22,9 +22,16 @@ interface BtwMenuState {
 	reason?: string;
 }
 
+export interface BtwResumeThreadSummary {
+	id: string;
+	title: string;
+	questionCount: number;
+}
+
 export interface ShowBtwCommandMenuOptions {
 	currentThinkingLevel: BtwThinkingLevel;
 	availableThinkingLevels: readonly BtwThinkingLevel[];
+	resumeThreads?: readonly BtwResumeThreadSummary[];
 	settingsPath?: string;
 	readSettings?: typeof readBtwSettings;
 	updateSettings?: (
@@ -33,10 +40,10 @@ export interface ShowBtwCommandMenuOptions {
 	) => Promise<BtwSettings>;
 }
 
-export type BtwCommandMenuResult = "start" | "closed";
+export type BtwCommandMenuResult = "start" | "closed" | { kind: "resume"; threadId: string };
 
-type BtwMenuScreen = "main" | "settings" | "invalid";
-type BtwMenuAction = "start" | "set-thinking" | "set-remember";
+type BtwMenuScreen = "main" | "resume" | "settings" | "invalid";
+type BtwMenuAction = "start" | "resume" | "set-thinking" | "set-remember";
 type BtwCustomOptions = Parameters<ExtensionCommandContext["ui"]["custom"]>[1];
 
 type BtwCustomFactory<T> = (
@@ -61,7 +68,9 @@ export async function showBtwCommandMenu(
 			? [...options.availableThinkingLevels]
 			: (["off"] satisfies BtwThinkingLevel[]);
 	const displaySettingsPath = sanitizeSingleLine(settingsPath);
+	const resumeThreads = options.resumeThreads ?? [];
 	let startSelected = false;
+	let resumedThreadId: string | undefined;
 
 	const loadState = async (): Promise<BtwMenuState> => {
 		const loaded = await readSettings(settingsPath);
@@ -89,6 +98,16 @@ export async function showBtwCommandMenu(
 						description: "Open an empty side thread",
 						action: "start",
 					},
+					...(resumeThreads.length > 0
+						? [
+								{
+									id: "resume" as const,
+									label: "Resume side thread",
+									description: "Continue an in-memory side thread",
+									to: "resume" as const,
+								},
+							]
+						: []),
 					{
 						id: "settings",
 						label: "Settings",
@@ -97,6 +116,18 @@ export async function showBtwCommandMenu(
 					},
 				],
 				hint: "close",
+			}),
+			resume: () => ({
+				kind: "choice",
+				title: "Resume BTW side thread",
+				items: resumeThreads.map((thread) => ({
+					id: thread.id,
+					label: thread.title,
+					description: `${thread.questionCount} ${thread.questionCount === 1 ? "question" : "questions"}`,
+				})),
+				action: "resume",
+				viewportSize: 10,
+				hint: "back",
 			}),
 			settings: ({ state }) => ({
 				kind: "settings",
@@ -136,6 +167,13 @@ export async function showBtwCommandMenu(
 				startSelected = true;
 				return { kind: "close" };
 			},
+			resume: async ({ itemId }: { itemId: string }) => {
+				if (!resumeThreads.some((thread) => thread.id === itemId)) {
+					return { kind: "rejected" } as const;
+				}
+				resumedThreadId = itemId;
+				return { kind: "close" } as const;
+			},
 			"set-thinking": async ({ value, signal }) => {
 				if (!value || !levels.includes(value as BtwThinkingLevel)) return { kind: "rejected" };
 				try {
@@ -172,9 +210,9 @@ export async function showBtwCommandMenu(
 	const result = await runBtwMenuPreservingEditor(ctx, (menuContext) =>
 		runMenu(menuContext, menu, { getState: loadState }),
 	);
-	return startSelected && result.kind === "closed" && result.reason === "close"
-		? "start"
-		: "closed";
+	if (result.kind !== "closed" || result.reason !== "close") return "closed";
+	if (resumedThreadId) return { kind: "resume", threadId: resumedThreadId };
+	return startSelected ? "start" : "closed";
 }
 
 export async function runBtwMenuPreservingEditor(

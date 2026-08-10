@@ -91,10 +91,64 @@ test("btw no-argument menu selects Start side thread first and preserves the edi
 		const rendered = tui.render().join("\n");
 		assert.match(rendered, /Pi BTW/);
 		assert.match(rendered, /→ Start side thread/);
+		assert.doesNotMatch(rendered, /Resume side thread/);
 		assert.match(rendered, /Settings/);
 		tui.press("tui.select.confirm");
 
 		assert.equal(await running, "start");
+		assert.equal(ctx.ui.getEditorText(), "draft");
+		await assert.rejects(readFile(settingsPath, "utf8"), { code: "ENOENT" });
+	});
+});
+
+test("btw menu selects an in-memory side thread through a Kit choice screen", async () => {
+	await withMenu(async ({ settingsPath, tui, ctx }) => {
+		const running = showBtwCommandMenu(ctx, {
+			settingsPath,
+			currentThinkingLevel: "low",
+			availableThinkingLevels: ["off", "low", "medium", "high"],
+			resumeThreads: [
+				{ id: "newer", title: "Second side topic", questionCount: 3 },
+				{ id: "older", title: "First side topic", questionCount: 1 },
+			],
+		});
+		await tui.waitForOpen();
+		assert.match(tui.render().join("\n"), /→ Start side thread/);
+		tui.press("tui.select.down");
+		assert.match(tui.render().join("\n"), /→ Resume side thread/);
+		tui.press("tui.select.confirm");
+		await tui.waitForOpen();
+		const choices = tui.render().join("\n");
+		assert.ok(choices.indexOf("Second side topic") < choices.indexOf("First side topic"));
+		assert.match(choices, /Second side topic\s+3 questions/);
+		assert.match(choices, /First side topic\s+1 question/);
+		assert.ok(tui.resize({ width: 32 }).every((line) => visibleWidth(line) <= 32));
+		tui.press("tui.select.confirm");
+
+		assert.deepEqual(await running, { kind: "resume", threadId: "newer" });
+		assert.equal(ctx.ui.getEditorText(), "draft");
+		await assert.rejects(readFile(settingsPath, "utf8"), { code: "ENOENT" });
+	});
+});
+
+test("btw Resume choice returns to the main menu with Back and closes with Ctrl+C", async () => {
+	await withMenu(async ({ settingsPath, tui, ctx }) => {
+		const running = showBtwCommandMenu(ctx, {
+			settingsPath,
+			currentThinkingLevel: "low",
+			availableThinkingLevels: ["off", "low"],
+			resumeThreads: [{ id: "thread", title: "Side topic", questionCount: 1 }],
+		});
+		await tui.waitForOpen();
+		tui.press("tui.select.down");
+		tui.press("tui.select.confirm");
+		await tui.waitForOpen();
+		tui.press("tui.select.cancel");
+		await tui.waitForOpen();
+		assert.match(tui.render().join("\n"), /→ Resume side thread/);
+		tui.press("ctrl+c");
+
+		assert.equal(await running, "closed");
 		assert.equal(ctx.ui.getEditorText(), "draft");
 		await assert.rejects(readFile(settingsPath, "utf8"), { code: "ENOENT" });
 	});

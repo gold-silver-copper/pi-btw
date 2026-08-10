@@ -405,6 +405,164 @@ test("btw command routes no arguments through the menu and preserves direct ques
 	assert.deepEqual(mock.thinkingLevels, []);
 });
 
+test("btw keeps multiple in-memory threads, resumes the selected one, and keeps direct questions fresh", async () => {
+	const mock = createMockPi({ thinkingLevel: "low" });
+	const selected = {
+		model: { provider: "test", id: "side", reasoning: true } as Model<Api>,
+		auth: { apiKey: "key" },
+	};
+	const menuResults: unknown[] = ["start", { kind: "resume", threadId: "btw-1" }, "closed"];
+	const menuSnapshots: Array<Array<{ id: string; title: string; questionCount: number }>> = [];
+	const states: Array<{
+		id: string;
+		title?: string;
+		thread: { turns: Array<{ kind: "error"; question: string; answer: string }> };
+		thinkingLevel: string;
+		updatedAt: number;
+	}> = [];
+	const initialQuestions: Array<string | undefined> = [];
+	let modelResolutions = 0;
+	btw(mock.pi, {
+		showCommandMenu: (async (
+			_pi: unknown,
+			_ctx: unknown,
+			resumeThreads: Array<{ id: string; title: string; questionCount: number }>,
+		) => {
+			menuSnapshots.push(resumeThreads.map((thread) => ({ ...thread })));
+			return menuResults.shift();
+		}) as never,
+		loadSettings: async () => ({ thinkingLevel: "medium" }),
+		resolveModel: async () => {
+			modelResolutions += 1;
+			return { kind: "selected", selected };
+		},
+		runFullscreen: async (ctx, run) => run(ctx),
+		runThread: (async (options: {
+			initialQuestion?: string;
+			state: {
+				id: string;
+				title?: string;
+				thread: { turns: Array<{ kind: "error"; question: string; answer: string }> };
+				thinkingLevel: string;
+				updatedAt: number;
+			};
+		}) => {
+			initialQuestions.push(options.initialQuestion);
+			states.push(options.state);
+			if (states.length === 1) {
+				options.state.title = "First side topic";
+				options.state.thread.turns.push({
+					kind: "error",
+					question: "First side topic",
+					answer: "first error",
+				});
+				options.state.thinkingLevel = "high";
+				options.state.updatedAt = 10;
+			} else if (states.length === 3) {
+				options.state.title = "Direct side topic";
+				options.state.thread.turns.push({
+					kind: "error",
+					question: "Direct side topic",
+					answer: "direct error",
+				});
+				options.state.updatedAt = 20;
+			}
+			return { kind: "closed" };
+		}) as never,
+	});
+	const command = mock.commands.get("btw");
+	assert.ok(command);
+	const interactive = createMockContext({ mode: "tui", hasUI: true });
+
+	await command.handler("", interactive.ctx);
+	await command.handler("", interactive.ctx);
+	await command.handler("Direct side topic", interactive.ctx);
+	await command.handler("", interactive.ctx);
+
+	assert.deepEqual(initialQuestions, [undefined, undefined, "Direct side topic"]);
+	assert.equal(states[1], states[0]);
+	assert.equal(states[1]?.thinkingLevel, "high");
+	assert.notEqual(states[2], states[0]);
+	assert.equal(states[2]?.thread.turns.length, 1);
+	assert.equal(modelResolutions, 3);
+	assert.deepEqual(menuSnapshots, [
+		[],
+		[{ id: "btw-1", title: "First side topic", questionCount: 1 }],
+		[
+			{ id: "btw-2", title: "Direct side topic", questionCount: 1 },
+			{ id: "btw-1", title: "First side topic", questionCount: 1 },
+		],
+	]);
+});
+
+test("an empty fresh btw thread does not enter or erase the in-memory Resume list", async () => {
+	const mock = createMockPi();
+	const selected = {
+		model: { provider: "test", id: "side" } as Model<Api>,
+		auth: { apiKey: "key" },
+	};
+	const menuResults = ["start", "closed"];
+	const menuSnapshots: Array<Array<{ id: string }>> = [];
+	const states: Array<{
+		id: string;
+		title?: string;
+		thread: { turns: unknown[] };
+		updatedAt: number;
+	}> = [];
+	btw(mock.pi, {
+		showCommandMenu: (async (_pi: unknown, _ctx: unknown, resumeThreads: Array<{ id: string }>) => {
+			menuSnapshots.push(resumeThreads.map((thread) => ({ id: thread.id })));
+			return menuResults.shift();
+		}) as never,
+		loadSettings: async () => ({}),
+		resolveModel: async () => ({ kind: "selected", selected }),
+		runFullscreen: async (ctx, run) => run(ctx),
+		runThread: (async (options: {
+			state: { id: string; title?: string; thread: { turns: unknown[] }; updatedAt: number };
+		}) => {
+			states.push(options.state);
+			if (states.length === 1) {
+				options.state.title = "Retained";
+				options.state.thread.turns.push({ kind: "error" });
+				options.state.updatedAt = 1;
+			}
+			return { kind: "closed" };
+		}) as never,
+	});
+	const command = mock.commands.get("btw");
+	assert.ok(command);
+	const interactive = createMockContext({ mode: "tui", hasUI: true });
+
+	await command.handler("Retained", interactive.ctx);
+	await command.handler("", interactive.ctx);
+	await command.handler("", interactive.ctx);
+
+	assert.deepEqual(menuSnapshots, [[{ id: "btw-1" }], [{ id: "btw-1" }]]);
+	assert.equal(states.length, 2);
+	assert.equal(states[1]?.thread.turns.length, 0);
+});
+
+test("separate btw extension instances do not share in-memory Resume state", async () => {
+	const first = createMockPi();
+	const second = createMockPi();
+	const snapshots: unknown[][] = [];
+	const register = (mock: ReturnType<typeof createMockPi>) =>
+		btw(mock.pi, {
+			showCommandMenu: (async (_pi: unknown, _ctx: unknown, threads: unknown[]) => {
+				snapshots.push([...threads]);
+				return "closed";
+			}) as never,
+		});
+	register(first);
+	register(second);
+	const interactive = createMockContext({ mode: "tui", hasUI: true });
+
+	await first.commands.get("btw")?.handler("", interactive.ctx);
+	await second.commands.get("btw")?.handler("", interactive.ctx);
+
+	assert.deepEqual(snapshots, [[], []]);
+});
+
 test("btw command cancellation at the no-argument menu does not resolve a model", async () => {
 	const mock = createMockPi();
 	let modelResolutions = 0;

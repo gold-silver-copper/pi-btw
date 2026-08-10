@@ -825,6 +825,97 @@ test("side-thread command loop opens the composer before the first question", as
 	assert.deepEqual(result, { kind: "closed" });
 });
 
+test("side-thread command loop updates resumable title, activity, and local thinking state", async () => {
+	const state = {
+		id: "btw-1",
+		title: undefined,
+		thread: createSideThread("main context"),
+		thinkingLevel: "low" as const,
+		createdAt: 10,
+		updatedAt: 10,
+	};
+	const askedWith: string[] = [];
+	let interactions = 0;
+
+	await runBtwThread({
+		selected: {
+			model: { provider: "test", id: "side", reasoning: true } as Model<Api>,
+			auth: { apiKey: "key" },
+		},
+		thinkingLevel: "off",
+		state,
+		ctx: {
+			ui: { notify() {} },
+			sessionManager: { getBranch: () => assert.fail("resumed state owns its original context") },
+		} as never,
+		dependencies: {
+			now: () => 42,
+			interact: async (_thread, _atBottom, _ctx, _draft, thinking) => {
+				interactions += 1;
+				if (interactions === 1) {
+					assert.equal(thinking.level, "low");
+					thinking.onChange("high");
+					return { kind: "submit", question: "First\nquestion" };
+				}
+				return { kind: "close" };
+			},
+			ask: async (thread, question, _selected, thinkingLevel) => {
+				askedWith.push(thinkingLevel);
+				const assistant = response("answer");
+				thread.turns.push({ kind: "answered", question, answer: "answer", response: assistant });
+				return { kind: "answered", response: assistant, answer: "answer" };
+			},
+		},
+	});
+
+	assert.equal(state.title, "First question");
+	assert.equal(state.thinkingLevel, "high");
+	assert.equal(state.updatedAt, 42);
+	assert.deepEqual(askedWith, ["high"]);
+	assert.equal(state.thread.turns.length, 1);
+});
+
+test("side-thread command loop retains a visible error as resumable activity", async () => {
+	const state = {
+		id: "btw-error",
+		title: undefined,
+		thread: createSideThread("main context"),
+		thinkingLevel: "off" as const,
+		createdAt: 5,
+		updatedAt: 5,
+	};
+	let interactions = 0;
+
+	await runBtwThread({
+		initialQuestion: "Failed question",
+		selected: {
+			model: { provider: "test", id: "side" } as Model<Api>,
+			auth: { apiKey: "key" },
+		},
+		thinkingLevel: "off",
+		state,
+		ctx: {
+			ui: { notify() {} },
+			sessionManager: { getBranch: () => assert.fail("provided state owns its context") },
+		} as never,
+		dependencies: {
+			now: () => 9,
+			ask: async () => ({ kind: "error", message: "provider unavailable" }),
+			interact: async () => {
+				interactions += 1;
+				return { kind: "close" };
+			},
+		},
+	});
+
+	assert.equal(interactions, 1);
+	assert.equal(state.title, "Failed question");
+	assert.equal(state.updatedAt, 9);
+	assert.deepEqual(state.thread.turns, [
+		{ kind: "error", question: "Failed question", answer: "provider unavailable" },
+	]);
+});
+
 test("side-thread command loop immediately accepts another question after each answer", async () => {
 	const ctx = {
 		ui: { notify() {} },
