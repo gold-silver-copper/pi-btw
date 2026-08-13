@@ -1,5 +1,11 @@
 # @narumitw/pi-btw
 
+## 0.51.0
+
+### Minor Changes
+
+- 69e8485: Add local fuzzy search to the in-memory Resume thread choice.
+
 ## 0.50.0
 
 ### Minor Changes
