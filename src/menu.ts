@@ -120,6 +120,7 @@ export async function showBtwCommandMenu(
 			resume: () => ({
 				kind: "choice",
 				title: "Resume BTW side thread",
+				enableSearch: true,
 				items: resumeThreads.map((thread) => ({
 					id: thread.id,
 					label: thread.title,

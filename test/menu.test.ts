@@ -122,12 +122,45 @@ test("btw menu selects an in-memory side thread through a Kit choice screen", as
 		assert.ok(choices.indexOf("Second side topic") < choices.indexOf("First side topic"));
 		assert.match(choices, /Second side topic\s+3 questions/);
 		assert.match(choices, /First side topic\s+1 question/);
+		tui.type("missing");
+		assert.match(tui.render().join("\n"), /No matching choices/u);
+		for (let index = 0; index < 7; index += 1) tui.send("\u007f");
+		tui.type("first");
+		const filtered = tui.render().join("\n");
+		assert.match(filtered, /→ First side topic/u);
+		assert.doesNotMatch(filtered, /Second side topic/u);
 		assert.ok(tui.resize({ width: 32 }).every((line) => visibleWidth(line) <= 32));
 		tui.press("tui.select.confirm");
 
-		assert.deepEqual(await running, { kind: "resume", threadId: "newer" });
+		assert.deepEqual(await running, { kind: "resume", threadId: "older" });
 		assert.equal(ctx.ui.getEditorText(), "draft");
 		await assert.rejects(readFile(settingsPath, "utf8"), { code: "ENOENT" });
+	});
+});
+
+test("btw Resume search keeps duplicate titles tied to raw thread ids", async () => {
+	await withMenu(async ({ settingsPath, tui, ctx }) => {
+		const running = showBtwCommandMenu(ctx, {
+			settingsPath,
+			currentThinkingLevel: "low",
+			availableThinkingLevels: ["off", "low"],
+			resumeThreads: [
+				{ id: "newer", title: "Repeated question", questionCount: 3 },
+				{ id: "older", title: "Repeated question", questionCount: 1 },
+			],
+		});
+		await tui.waitForOpen();
+		tui.press("tui.select.down");
+		tui.press("tui.select.confirm");
+		await tui.waitForOpen();
+		tui.type("1 question");
+		const filtered = tui.render().join("\n");
+		assert.match(filtered, /→ Repeated question\s+1 question/u);
+		assert.doesNotMatch(filtered, /3 questions/u);
+		tui.press("tui.select.confirm");
+
+		assert.deepEqual(await running, { kind: "resume", threadId: "older" });
+		assert.equal(ctx.ui.getEditorText(), "draft");
 	});
 });
 

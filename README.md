@@ -58,14 +58,15 @@ Examples:
 /btw is this API name idiomatic?
 ```
 
-Running `/btw` alone opens a menu with **Start side thread** selected first. When the current Pi
-session has non-empty side threads in memory, **Resume side thread** opens a bounded choice list;
+Running `/btw` alone opens a menu with **Start side thread** selected first.
+When the current Pi session has non-empty side threads in memory, **Resume side thread** opens a bounded searchable choice list.
+Search matches the displayed first question and question count while returning the thread's raw in-memory ID.
 **Settings** changes the starting thinking level and whether shortcut changes are remembered.
-Each Resume row keeps the first question as its fixed title, shows its question count, and the list
-is ordered by the newest recorded answer or visible error. Opening and closing a thread without a
-new result does not reorder it. `/btw <question>` bypasses this menu and always starts a fresh side
-thread. Its answer opens above the side-thread editor. The side thread uses a dedicated full-screen
-terminal view.
+Each Resume row keeps the first question as its fixed title, shows its question count, and the list is ordered by the newest recorded answer or visible error.
+Opening and closing a thread without a new result does not reorder it.
+`/btw <question>` bypasses this menu and always starts a fresh side thread.
+Its answer opens above the side-thread editor.
+The side thread uses a dedicated full-screen terminal view.
 The main agent continues running in the background, but its screen rendering stays suspended until
 `/btw` closes, so new main-thread output cannot move a mouse selection inside the side thread.
 Drag the primary mouse button across side-thread text to select and copy it through Pi's terminal
