@@ -1,5 +1,11 @@
 # @narumitw/pi-btw
 
+## 0.52.0
+
+### Minor Changes
+
+- f3d76af: Add a Same as main thread thinking option that starts new side threads from the current main thread level while keeping shortcut changes local.
+
 ## 0.51.0
 
 ### Minor Changes
