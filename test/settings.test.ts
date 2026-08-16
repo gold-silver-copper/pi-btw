@@ -50,6 +50,33 @@ test("btw settings preserve omitted thinking levels for backward compatibility",
 	});
 });
 
+test("btw settings can clear thinking level while preserving other fields", async () => {
+	await withTempSettings(async (settingsPath) => {
+		await updateBtwSettings(
+			{ thinkingLevel: "low", rememberThinkingLevelChanges: false },
+			{ settingsPath },
+		);
+		await writeFile(
+			settingsPath,
+			'{"model":"test/side","future":{"kept":true},"thinkingLevel":"low","rememberThinkingLevelChanges":false}\n',
+			"utf8",
+		);
+
+		await updateBtwSettings({ thinkingLevel: undefined }, { settingsPath });
+
+		const saved = JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, unknown>;
+		assert.deepEqual(saved, {
+			model: "test/side",
+			future: { kept: true },
+			rememberThinkingLevelChanges: false,
+		});
+		assert.deepEqual(await readBtwSettings(settingsPath), {
+			kind: "loaded",
+			settings: { model: "test/side", rememberThinkingLevelChanges: false },
+		});
+	});
+});
+
 test("btw settings updates preserve unknown fields and create only on explicit save", async () => {
 	await withTempSettings(async (settingsPath) => {
 		await updateBtwSettings(

@@ -222,7 +222,8 @@ test("btw menu opens Pi-style thinking settings and cancellation is read-only", 
 		await openSettings(tui);
 		const settings = tui.render().join("\n");
 		assert.match(settings, /Pi BTW Settings/);
-		assert.match(settings, /Thinking level\s+medium/);
+		assert.match(settings, /Thinking level\s+Same as main thread/);
+		assert.match(settings, /Currently medium/);
 		assert.match(settings, /Remember thinking level changes\s+On/);
 		tui.press("ctrl+c");
 
@@ -232,9 +233,46 @@ test("btw menu opens Pi-style thinking settings and cancellation is read-only", 
 	});
 });
 
+test("btw settings can choose Same as main thread and clear a fixed thinking level", async () => {
+	await withMenu(async ({ settingsPath, tui, ctx, notifications }) => {
+		await writeFile(
+			settingsPath,
+			'{"model":"test/side","future":{"kept":true},"thinkingLevel":"high","rememberThinkingLevelChanges":false}\n',
+			"utf8",
+		);
+		const running = showBtwCommandMenu(ctx, {
+			settingsPath,
+			currentThinkingLevel: "medium",
+			availableThinkingLevels: ["off", "low", "medium", "high"],
+		});
+		await openSettings(tui);
+		assert.match(tui.render().join("\n"), /Thinking level\s+high/);
+		tui.press("tui.select.confirm");
+		await tui.waitForPending();
+		await tui.waitForOpen();
+
+		const saved = JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, unknown>;
+		assert.deepEqual(saved, {
+			model: "test/side",
+			future: { kept: true },
+			rememberThinkingLevelChanges: false,
+		});
+		assert.match(tui.render().join("\n"), /Thinking level\s+Same as main thread/);
+		assert.ok(
+			notifications.some(({ message }) => /thinking level: Same as main thread/i.test(message)),
+		);
+		tui.press("ctrl+c");
+		assert.equal(await running, "closed");
+	});
+});
+
 test("btw settings save thinking and remembering immediately while preserving unknown fields", async () => {
 	await withMenu(async ({ settingsPath, tui, ctx, notifications }) => {
-		await writeFile(settingsPath, '{"model":"test/side","future":{"kept":true}}\n', "utf8");
+		await writeFile(
+			settingsPath,
+			'{"model":"test/side","future":{"kept":true},"thinkingLevel":"medium"}\n',
+			"utf8",
+		);
 		const running = showBtwCommandMenu(ctx, {
 			settingsPath,
 			currentThinkingLevel: "medium",
@@ -280,7 +318,7 @@ test("btw settings reject failed saves and restore the prior displayed value", a
 		await tui.waitForOpen();
 		const narrow = tui.render(32);
 		assert.ok(narrow.every((line) => visibleWidth(line) <= 32));
-		assert.match(tui.render(80).join("\n"), /Thinking level\s+medium/);
+		assert.match(tui.render(80).join("\n"), /Thinking level\s+Same as main thread/);
 		const failureMessage = notifications[0]?.message ?? "";
 		assert.match(failureMessage, /previous value remains active.*disk full/i);
 		assert.equal(
@@ -298,6 +336,7 @@ test("btw settings reject failed saves and restore the prior displayed value", a
 
 test("btw settings retain a completed save when its notification context is stale", async () => {
 	await withMenu(async ({ settingsPath, tui, ctx }) => {
+		await writeFile(settingsPath, '{"thinkingLevel":"low"}\n', "utf8");
 		ctx.ui.notify = () => {
 			throw new Error("Extension context is no longer active");
 		};

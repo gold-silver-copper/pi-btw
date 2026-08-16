@@ -7,6 +7,7 @@ import type { Component, TUI } from "@earendil-works/pi-tui";
 import type { MenuContext, RunMenuResult } from "@narumitw/pi-tui-kit";
 import {
 	type BtwSettings,
+	type BtwSettingsPatch,
 	btwSettingsPath,
 	effectiveRememberThinkingLevelChanges,
 	readBtwSettings,
@@ -35,7 +36,7 @@ export interface ShowBtwCommandMenuOptions {
 	settingsPath?: string;
 	readSettings?: typeof readBtwSettings;
 	updateSettings?: (
-		patch: Partial<Pick<BtwSettings, "thinkingLevel" | "rememberThinkingLevelChanges">>,
+		patch: BtwSettingsPatch,
 		options: UpdateBtwSettingsOptions,
 	) => Promise<BtwSettings>;
 }
@@ -44,6 +45,7 @@ export type BtwCommandMenuResult = "start" | "closed" | { kind: "resume"; thread
 
 type BtwMenuScreen = "main" | "resume" | "settings" | "invalid";
 type BtwMenuAction = "start" | "resume" | "set-thinking" | "set-remember";
+const SAME_AS_MAIN_THREAD = "Same as main thread";
 type BtwCustomOptions = Parameters<ExtensionCommandContext["ui"]["custom"]>[1];
 
 type BtwCustomFactory<T> = (
@@ -79,8 +81,22 @@ export async function showBtwCommandMenu(
 		}
 		return { kind: "valid", settings: loaded.kind === "loaded" ? loaded.settings : {} };
 	};
-	const displayThinkingLevel = (settings: BtwSettings): BtwThinkingLevel =>
-		clampToAvailableThinkingLevel(settings.thinkingLevel ?? options.currentThinkingLevel, levels);
+	const currentMainThinkingLevel = clampToAvailableThinkingLevel(
+		options.currentThinkingLevel,
+		levels,
+	);
+	const displayThinkingLevel = (settings: BtwSettings): string =>
+		settings.thinkingLevel === undefined
+			? SAME_AS_MAIN_THREAD
+			: clampToAvailableThinkingLevel(settings.thinkingLevel, levels);
+	const displayThinkingSummary = (settings: BtwSettings): string =>
+		settings.thinkingLevel === undefined
+			? `${SAME_AS_MAIN_THREAD} (currently ${currentMainThinkingLevel})`
+			: displayThinkingLevel(settings);
+	const displayRememberSummary = (settings: BtwSettings): string => {
+		const value = effectiveRememberThinkingLevelChanges(settings) ? "On" : "Off";
+		return settings.thinkingLevel === undefined ? `${value} (fixed levels only)` : value;
+	};
 
 	const menu = defineMenu<BtwMenuState, BtwMenuScreen, BtwMenuAction, MenuContext>({
 		start: "main",
@@ -89,7 +105,7 @@ export async function showBtwCommandMenu(
 				kind: "actions",
 				title: "Pi BTW",
 				lines: [
-					`Thinking: ${displayThinkingLevel(state.settings)} · Remember changes: ${effectiveRememberThinkingLevelChanges(state.settings) ? "On" : "Off"}`,
+					`Thinking: ${displayThinkingSummary(state.settings)} · Remember changes: ${displayRememberSummary(state.settings)}`,
 				],
 				items: [
 					{
@@ -111,7 +127,7 @@ export async function showBtwCommandMenu(
 					{
 						id: "settings",
 						label: "Settings",
-						description: "Choose pi-btw thinking and whether shortcut changes are remembered",
+						description: "Choose pi-btw thinking level and fixed-level shortcut memory",
 						to: state.kind === "invalid" ? "invalid" : "settings",
 					},
 				],
@@ -138,15 +154,15 @@ export async function showBtwCommandMenu(
 					{
 						id: "thinkingLevel",
 						label: "Thinking level",
-						description: "Set the starting level for future pi-btw side threads.",
+						description: `Set the starting level for future pi-btw side threads. Currently ${currentMainThinkingLevel}.`,
 						currentValue: displayThinkingLevel(state.settings),
-						values: levels,
+						values: [SAME_AS_MAIN_THREAD, ...levels],
 						action: "set-thinking",
 					},
 					{
 						id: "rememberThinkingLevelChanges",
 						label: "Remember thinking level changes",
-						description: "Save side-thread shortcut changes to pi-btw.json for next time.",
+						description: "Save shortcut changes for fixed thinking levels to pi-btw.json.",
 						currentValue: effectiveRememberThinkingLevelChanges(state.settings) ? "On" : "Off",
 						values: ["On", "Off"],
 						action: "set-remember",
@@ -176,12 +192,16 @@ export async function showBtwCommandMenu(
 				return { kind: "close" } as const;
 			},
 			"set-thinking": async ({ value, signal }) => {
-				if (!value || !levels.includes(value as BtwThinkingLevel)) return { kind: "rejected" };
+				if (!value) return { kind: "rejected" };
+				const patch =
+					value === SAME_AS_MAIN_THREAD
+						? ({ thinkingLevel: undefined } satisfies BtwSettingsPatch)
+						: levels.includes(value as BtwThinkingLevel)
+							? ({ thinkingLevel: value as BtwThinkingLevel } satisfies BtwSettingsPatch)
+							: undefined;
+				if (!patch) return { kind: "rejected" };
 				try {
-					await updateSettings(
-						{ thinkingLevel: value as BtwThinkingLevel },
-						{ settingsPath, signal },
-					);
+					await updateSettings(patch, { settingsPath, signal });
 					if (signal.aborted) return { kind: "rejected" };
 					notifySafely(ctx, `Pi BTW thinking level: ${value}.`, "info");
 					return { kind: "stay" };

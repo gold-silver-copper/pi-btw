@@ -194,7 +194,7 @@ export async function loadBtwThinkingLevel(
 
 	options.warn?.(
 		sanitizeSingleLine(
-			`pi-btw settings ignored: ${settings.reason}; expected optional model "provider/model-id", thinkingLevel "${BTW_THINKING_LEVELS.join('" | "')}", and boolean rememberThinkingLevelChanges. Using current Pi thinking level.`,
+			`pi-btw settings ignored: ${settings.reason}; expected optional model "provider/model-id", omitted thinkingLevel for Same as main thread or thinkingLevel "${BTW_THINKING_LEVELS.join('" | "')}", and boolean rememberThinkingLevelChanges. Using current Pi thinking level.`,
 		),
 	);
 	return currentThinkingLevel;
@@ -265,6 +265,7 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
 			}
 
 			const settings = await loadSettings(ctx);
+			const sameAsMainThinkingLevel = settings.thinkingLevel === undefined;
 			const resolution = await resolveModel(settings, ctx);
 			if (resolution.kind === "cancelled") {
 				notifySafely(ctx, "Cancelled", "info");
@@ -302,7 +303,8 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
 						initialQuestion: question || undefined,
 						selected: resolution.selected,
 						thinkingLevel: state.thinkingLevel,
-						rememberThinkingLevelChanges: effectiveRememberThinkingLevelChanges(settings),
+						rememberThinkingLevelChanges:
+							!sameAsMainThinkingLevel && effectiveRememberThinkingLevelChanges(settings),
 						state,
 						ctx: fullscreenCtx,
 					});

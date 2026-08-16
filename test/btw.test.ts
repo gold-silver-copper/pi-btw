@@ -405,6 +405,45 @@ test("btw command routes no arguments through the menu and preserves direct ques
 	assert.deepEqual(mock.thinkingLevels, []);
 });
 
+test("btw same-as-main mode starts fresh threads from the current main level without remembering shortcut changes", async () => {
+	const mock = createMockPi({ thinkingLevel: "high" });
+	const selected = {
+		model: { provider: "test", id: "side", reasoning: true } as Model<Api>,
+		auth: { apiKey: "key" },
+	};
+	const threadStarts: Array<{
+		initialQuestion?: string;
+		thinkingLevel: string;
+		rememberThinkingLevelChanges?: boolean;
+	}> = [];
+	btw(mock.pi, {
+		loadSettings: async () => ({}),
+		resolveModel: async () => ({ kind: "selected", selected }),
+		runFullscreen: async (ctx, run) => run(ctx),
+		runThread: async (options) => {
+			threadStarts.push({
+				initialQuestion: options.initialQuestion,
+				thinkingLevel: options.thinkingLevel,
+				rememberThinkingLevelChanges: options.rememberThinkingLevelChanges,
+			});
+			return { kind: "closed" };
+		},
+	});
+	const command = mock.commands.get("btw");
+	assert.ok(command);
+
+	await command.handler("same as main", createMockContext({ mode: "tui", hasUI: true }).ctx);
+
+	assert.deepEqual(threadStarts, [
+		{
+			initialQuestion: "same as main",
+			thinkingLevel: "high",
+			rememberThinkingLevelChanges: false,
+		},
+	]);
+	assert.deepEqual(mock.thinkingLevels, []);
+});
+
 test("btw keeps multiple in-memory threads, resumes the selected one, and keeps direct questions fresh", async () => {
 	const mock = createMockPi({ thinkingLevel: "low" });
 	const selected = {

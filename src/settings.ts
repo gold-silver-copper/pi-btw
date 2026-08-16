@@ -20,6 +20,11 @@ export type BtwSettingsLoadResult =
 	| { kind: "invalid"; reason: string }
 	| { kind: "loaded"; settings: BtwSettings };
 
+export interface BtwSettingsPatch {
+	thinkingLevel?: BtwThinkingLevel;
+	rememberThinkingLevelChanges?: boolean;
+}
+
 export interface UpdateBtwSettingsOptions {
 	settingsPath?: string;
 	signal?: AbortSignal;
@@ -77,14 +82,14 @@ export async function readBtwSettings(
 }
 
 export function updateBtwSettings(
-	patch: Partial<Pick<BtwSettings, "thinkingLevel" | "rememberThinkingLevelChanges">>,
+	patch: BtwSettingsPatch,
 	options: UpdateBtwSettingsOptions = {},
 ): Promise<BtwSettings> {
 	const settingsPath = options.settingsPath ?? btwSettingsPath();
 	return enqueueMutation(settingsPath, async () => {
 		options.signal?.throwIfAborted();
 		const current = await readSettingsDocumentForUpdate(settingsPath);
-		const updated: SettingsDocument = { ...current, ...patch };
+		const updated = applyBtwSettingsPatch(current, patch);
 		const settings = normalizeBtwSettings(updated);
 		if (!settings) throw invalidSettingsError(settingsPath, "invalid settings shape");
 		await publishSettings(settingsPath, updated, options.signal, options.beforeRename);
@@ -214,6 +219,21 @@ async function publishSettings(
 		await rm(temporaryPath, { force: true }).catch(() => undefined);
 		throw error;
 	}
+}
+
+function applyBtwSettingsPatch(
+	current: SettingsDocument,
+	patch: BtwSettingsPatch,
+): SettingsDocument {
+	const updated: SettingsDocument = { ...current };
+	if (Object.hasOwn(patch, "thinkingLevel")) {
+		if (patch.thinkingLevel === undefined) delete updated.thinkingLevel;
+		else updated.thinkingLevel = patch.thinkingLevel;
+	}
+	if (Object.hasOwn(patch, "rememberThinkingLevelChanges")) {
+		updated.rememberThinkingLevelChanges = patch.rememberThinkingLevelChanges;
+	}
+	return updated;
 }
 
 function isSettingsDocument(value: unknown): value is SettingsDocument {
