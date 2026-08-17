@@ -23,7 +23,7 @@ import {
 	summarizeBringToMain,
 } from "./bring-to-main.js";
 import { type RunBtwFullscreen, runBtwFullscreen } from "./fullscreen-ui.js";
-import { showMainThreadTreePicker } from "./main-thread-tree.js";
+import { pickMainEntry } from "./main-tree-picker.js";
 import {
 	type BtwCommandMenuResult,
 	type BtwResumeThreadSummary,
@@ -221,7 +221,7 @@ export interface BtwExtensionDependencies {
 		ctx: ExtensionCommandContext,
 		resumeThreads: readonly BtwResumeThreadSummary[],
 	) => Promise<BtwCommandMenuResult>;
-	showTreePicker?: typeof showMainThreadTreePicker;
+	pickMainEntry?: typeof pickMainEntry;
 	loadSettings?: typeof loadSettingsForCommand;
 	resolveModel?: typeof resolveBtwModelWithLoader;
 	runThread?: typeof runBtwThread;
@@ -230,7 +230,7 @@ export interface BtwExtensionDependencies {
 
 export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependencies = {}) {
 	const showCommandMenu = dependencies.showCommandMenu ?? showCommandMenuForBtw;
-	const showTreePicker = dependencies.showTreePicker ?? showMainThreadTreePicker;
+	const pickEntry = dependencies.pickMainEntry ?? pickMainEntry;
 	const loadSettings = dependencies.loadSettings ?? loadSettingsForCommand;
 	const resolveModel = dependencies.resolveModel ?? resolveBtwModelWithLoader;
 	const runThread = dependencies.runThread ?? runBtwThread;
@@ -267,7 +267,7 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
 					if (menuResult === "closed") return;
 					if (menuResult !== "tree") break;
 
-					const treeResult = await showTreePicker(pi, ctx);
+					const treeResult = await pickEntry(pi, ctx);
 					if (treeResult.kind === "closed") return;
 					if (treeResult.kind === "back") continue;
 					try {

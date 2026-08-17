@@ -493,7 +493,7 @@ test("btw starts a fresh side thread from a selected main-thread branch snapshot
 	});
 	btw(mock.pi, {
 		showCommandMenu: async () => "tree",
-		showTreePicker: async () => {
+		pickMainEntry: async () => {
 			entries.push({
 				...activeEntry,
 				id: "later-active-assistant",
@@ -539,7 +539,7 @@ test("btw returns from a cancelled tree picker to the menu without resolving cre
 	let threadRuns = 0;
 	btw(mock.pi, {
 		showCommandMenu: async () => menuResults.shift() as never,
-		showTreePicker: async () => {
+		pickMainEntry: async () => {
 			pickerCalls += 1;
 			return { kind: "back" };
 		},
@@ -571,7 +571,7 @@ test("btw closes from a tree picker Ctrl+C without resolving credentials or crea
 	let threadRuns = 0;
 	btw(mock.pi, {
 		showCommandMenu: async () => "tree",
-		showTreePicker: async () => ({ kind: "closed" }),
+		pickMainEntry: async () => ({ kind: "closed" }),
 		resolveModel: async () => {
 			modelResolutions += 1;
 			return { kind: "unavailable" };
@@ -606,7 +606,7 @@ test("btw rejects a stale selected tree entry without falling back to the active
 	});
 	btw(mock.pi, {
 		showCommandMenu: async () => menuResults.shift() as never,
-		showTreePicker: async () => ({ kind: "selected", entryId: "missing" }),
+		pickMainEntry: async () => ({ kind: "selected", entryId: "missing" }),
 		resolveModel: async () => {
 			modelResolutions += 1;
 			return { kind: "unavailable" };

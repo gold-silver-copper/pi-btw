@@ -194,7 +194,7 @@ packages/pi-btw/
 │   ├── index.ts
 │   ├── btw.ts
 │   ├── bring-to-main.ts
-│   ├── main-thread-tree.ts
+│   ├── main-tree-picker.ts
 │   ├── menu.ts
 │   ├── settings.ts
 │   ├── side-thread.ts

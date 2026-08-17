@@ -10,14 +10,14 @@ import { type Component, type Focusable, Key, matchesKey } from "@earendil-works
 import { showBtwCustomPreservingEditor } from "./menu.js";
 import { sanitizeSingleLine } from "./text.js";
 
-export type MainThreadTreePickerResult =
+export type MainEntryPickResult =
 	| { kind: "selected"; entryId: string }
 	| { kind: "back" }
 	| { kind: "closed" };
 
 export interface MainThreadTreeSelector extends Component, Focusable {
 	onCopy?: (text: string | undefined) => void;
-	restoreLabel?(entryId: string, label: string | undefined, labelTimestamp?: string): void;
+	setViewLabel?(entryId: string, label: string | undefined, labelTimestamp?: string): void;
 	dispose?(): void;
 }
 
@@ -76,11 +76,11 @@ class MainThreadTreePickerComponent implements Component, Focusable {
 	}
 }
 
-export async function showMainThreadTreePicker(
+export async function pickMainEntry(
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
 	dependencies: MainThreadTreePickerDependencies = {},
-): Promise<MainThreadTreePickerResult> {
+): Promise<MainEntryPickResult> {
 	let rawTree: SessionTreeNode[];
 	let currentLeafId: string | null;
 	try {
@@ -99,7 +99,7 @@ export async function showMainThreadTreePicker(
 	const rawCopyText = collectRawCopyText(rawTree);
 	const savedLabels = collectSavedLabels(rawTree);
 	const createSelector = dependencies.createSelector ?? createNativeTreeSelector;
-	const copy = dependencies.copyToClipboard ?? copyWithPi;
+	const copy = dependencies.copyToClipboard ?? copyText;
 	const copyControllers = new Set<AbortController>();
 	const copyTasks = new Set<Promise<void>>();
 	const abortCopies = () => {
@@ -107,12 +107,12 @@ export async function showMainThreadTreePicker(
 			controller.abort(new Error("The main-thread tree picker closed"));
 		}
 	};
-	const result = await showBtwCustomPreservingEditor<MainThreadTreePickerResult>(
+	const result = await showBtwCustomPreservingEditor<MainEntryPickResult>(
 		ctx,
 		(tui, _theme, _keybindings, done) => {
 			let settled = false;
 			let selector: MainThreadTreeSelector | undefined;
-			const finish = (value: MainThreadTreePickerResult) => {
+			const finish = (value: MainEntryPickResult) => {
 				if (settled) return;
 				settled = true;
 				abortCopies();
@@ -151,7 +151,7 @@ export async function showMainThreadTreePicker(
 			};
 			const restoreLabel = (entryId: string) => {
 				const previous = savedLabels.get(entryId);
-				selector?.restoreLabel?.(entryId, previous?.label, previous?.labelTimestamp);
+				selector?.setViewLabel?.(entryId, previous?.label, previous?.labelTimestamp);
 				tui.requestRender();
 			};
 			const onLabelChange = (entryId: string, label: string | undefined) => {
@@ -165,7 +165,7 @@ export async function showMainThreadTreePicker(
 					const persistedLabel = label === undefined ? undefined : sanitizeSingleLine(label);
 					pi.setLabel(entryId, persistedLabel);
 					savedLabels.set(entryId, { label: persistedLabel });
-					selector?.restoreLabel?.(entryId, persistedLabel);
+					selector?.setViewLabel?.(entryId, persistedLabel);
 					tui.requestRender();
 				} catch (error: unknown) {
 					restoreLabel(entryId);
@@ -202,7 +202,7 @@ function createNativeTreeSelector(options: MainThreadTreeSelectorOptions): MainT
 	selector.onCopy = (displayText) =>
 		options.onCopy(selector.getTreeList().getSelectedNode()?.entry.id, displayText);
 	const result = selector as MainThreadTreeSelector;
-	result.restoreLabel = (entryId, label, labelTimestamp) =>
+	result.setViewLabel = (entryId, label, labelTimestamp) =>
 		selector.getTreeList().updateNodeLabel(entryId, label, labelTimestamp);
 	return result;
 }
@@ -367,7 +367,7 @@ function collectSavedLabels(tree: readonly SessionTreeNode[]): Map<string, Saved
 	return result;
 }
 
-async function copyWithPi(text: string, signal: AbortSignal): Promise<void> {
+async function copyText(text: string, signal: AbortSignal): Promise<void> {
 	signal.throwIfAborted();
 	await copyToClipboard(text);
 	signal.throwIfAborted();

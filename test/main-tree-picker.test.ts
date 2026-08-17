@@ -7,10 +7,7 @@ import {
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { test } from "vitest";
 import { createCustomSelectorHarness, createMockContext } from "../../../test/support.js";
-import {
-	type MainThreadTreeSelectorOptions,
-	showMainThreadTreePicker,
-} from "../src/main-thread-tree.js";
+import { type MainThreadTreeSelectorOptions, pickMainEntry } from "../src/main-tree-picker.js";
 
 function userNode(id: string, parentId: string | null, text: string): SessionTreeNode {
 	return {
@@ -72,7 +69,7 @@ test("main-thread tree picker passes the session snapshot and current leaf to th
 		},
 	});
 
-	const result = await showMainThreadTreePicker({ setLabel() {} } as never, mock.ctx, {
+	const result = await pickMainEntry({ setLabel() {} } as never, mock.ctx, {
 		createSelector: createFakeSelector((options) => {
 			captured = options;
 		}),
@@ -140,7 +137,7 @@ test("tree display strips terminal controls while copy keeps the raw selected te
 		},
 	});
 
-	await showMainThreadTreePicker({ setLabel() {} } as never, mock.ctx, {
+	await pickMainEntry({ setLabel() {} } as never, mock.ctx, {
 		createSelector: (options) => {
 			displayTree = options.tree;
 			return {
@@ -179,7 +176,7 @@ test("main-thread tree picker reports an empty tree without opening custom UI", 
 		},
 	});
 
-	const result = await showMainThreadTreePicker({ setLabel() {} } as never, mock.ctx);
+	const result = await pickMainEntry({ setLabel() {} } as never, mock.ctx);
 
 	assert.deepEqual(result, { kind: "back" });
 	assert.equal(customCalls, 0);
@@ -205,7 +202,7 @@ test("Escape returns to the menu while Ctrl+C closes the overall tree flow", asy
 				return harness.resultPromise;
 			},
 		});
-		return showMainThreadTreePicker({ setLabel() {} } as never, mock.ctx, {
+		return pickMainEntry({ setLabel() {} } as never, mock.ctx, {
 			createSelector: createFakeSelector(() => {}),
 		});
 	};
@@ -235,13 +232,13 @@ test("native copy success and failure are observable and terminal-safe", async (
 	});
 	const createSelector = createFakeSelector(() => {});
 
-	await showMainThreadTreePicker({ setLabel() {} } as never, mock.ctx, {
+	await pickMainEntry({ setLabel() {} } as never, mock.ctx, {
 		createSelector,
 		copyToClipboard: async (text) => {
 			copied.push(text);
 		},
 	});
-	await showMainThreadTreePicker({ setLabel() {} } as never, mock.ctx, {
+	await pickMainEntry({ setLabel() {} } as never, mock.ctx, {
 		createSelector,
 		copyToClipboard: () => {
 			throw new Error("clipboard failed\u001b]52;c;ZXZpbA==\u0007");
@@ -281,7 +278,7 @@ test("failed label persistence restores the previously displayed label", async (
 		},
 	});
 
-	await showMainThreadTreePicker(
+	await pickMainEntry(
 		{
 			setLabel() {
 				throw new Error("read only");
@@ -300,7 +297,7 @@ test("failed label persistence restores the previously displayed label", async (
 					if (data === "escape") options.onCancel();
 				},
 				invalidate() {},
-				restoreLabel(_entryId, label) {
+				setViewLabel(_entryId, label) {
 					displayedLabel = label;
 				},
 			}),
@@ -331,7 +328,7 @@ test("native label editing writes only after the selector's explicit callback", 
 		},
 	});
 
-	await showMainThreadTreePicker(
+	await pickMainEntry(
 		{
 			setLabel: (entryId: string, label: string | undefined) => labels.push({ entryId, label }),
 		} as never,
@@ -362,7 +359,7 @@ test("native tree selector renders within narrow terminal widths", async () => {
 		},
 	});
 
-	assert.deepEqual(await showMainThreadTreePicker({ setLabel() {} } as never, mock.ctx), {
+	assert.deepEqual(await pickMainEntry({ setLabel() {} } as never, mock.ctx), {
 		kind: "closed",
 	});
 });
@@ -386,7 +383,7 @@ test("disposing the tree picker aborts and drains the pending clipboard operatio
 		},
 	});
 
-	const result = await showMainThreadTreePicker({ setLabel() {} } as never, mock.ctx, {
+	const result = await pickMainEntry({ setLabel() {} } as never, mock.ctx, {
 		createSelector: createFakeSelector(() => {}),
 		copyToClipboard: async (_text, signal) =>
 			new Promise<void>((_resolve, reject) => {
