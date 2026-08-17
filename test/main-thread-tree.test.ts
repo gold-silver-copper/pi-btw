@@ -41,9 +41,9 @@ function createFakeSelector(onCreate: (options: MainThreadTreeSelectorOptions) =
 			handleInput(data) {
 				if (data === "select") options.onSelect("branch-entry");
 				if (data === "escape") options.onCancel();
-				if (data === "copy") options.onCopy("copied text");
-				if (data === "copy-empty") options.onCopy(undefined);
-				if (data === "label") options.onLabelChange("branch-entry", "checkpoint");
+				if (data === "copy") options.onCopy("branch-entry", "copied text");
+				if (data === "copy-empty") options.onCopy("branch-entry", undefined);
+				if (data === "label") options.onLabelChange("branch-entry", "check\u001b[2Jpoint");
 			},
 			invalidate() {},
 		};
@@ -82,6 +82,90 @@ test("main-thread tree picker passes the session snapshot and current leaf to th
 	assert.deepEqual(captured?.tree, [root]);
 	assert.equal(captured?.currentLeafId, "active-leaf");
 	assert.equal(mock.editorText, "newer main draft");
+});
+
+test("tree display strips terminal controls while copy keeps the raw selected text", async () => {
+	const rawText = "safe\u001b]52;c;ZXZpbA==\u0007\u009b31mtext";
+	const root = userNode("root", null, rawText);
+	root.label = "label\u001b[2J";
+	root.children.push(
+		{
+			entry: {
+				type: "message",
+				id: "assistant",
+				parentId: "root",
+				timestamp: "2026-01-01T00:00:01.000Z",
+				message: {
+					role: "assistant",
+					content: [
+						{
+							type: "toolCall",
+							id: "call-1",
+							name: "read\u001b[31m",
+							arguments: { path: "src/unsafe\u009b2J.ts" },
+						},
+					],
+				},
+			},
+			children: [],
+		} as unknown as SessionTreeNode,
+		{
+			entry: {
+				type: "model_change",
+				id: "model",
+				parentId: "root",
+				timestamp: "2026-01-01T00:00:02.000Z",
+				provider: "unsafe\u001b]0;title\u0007",
+				modelId: "model\u009b2J",
+			},
+			children: [],
+		},
+	);
+	let displayTree: SessionTreeNode[] | undefined;
+	let copied: string | undefined;
+	const mock = createMockContext({
+		mode: "tui",
+		hasUI: true,
+		sessionManager: {
+			getTree: () => [root],
+			getLeafId: () => "root",
+			getEntry: () => root.entry,
+		},
+		custom: async (factory: unknown) => {
+			const harness = createCustomSelectorHarness(factory);
+			harness.handleInput("copy-raw");
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			harness.handleInput("escape");
+			return harness.resultPromise;
+		},
+	});
+
+	await showMainThreadTreePicker({ setLabel() {} } as never, mock.ctx, {
+		createSelector: (options) => {
+			displayTree = options.tree;
+			return {
+				focused: false,
+				render: () => ["tree"],
+				handleInput(data) {
+					if (data === "copy-raw") {
+						(options.onCopy as (...args: unknown[]) => void)("root", "sanitized text");
+					}
+					if (data === "escape") options.onCancel();
+				},
+				invalidate() {},
+			};
+		},
+		copyToClipboard: async (text) => {
+			copied = text;
+		},
+	});
+
+	const displayed = JSON.stringify(displayTree);
+	assert.equal(hasTerminalControlInValue(displayTree), false);
+	assert.match(displayed, /safe.*text/);
+	assert.equal(copied, rawText);
+	assert.equal((root.entry as { message: { content: string } }).message.content, rawText);
+	assert.equal(root.label, "label\u001b[2J");
 });
 
 test("main-thread tree picker reports an empty tree without opening custom UI", async () => {
@@ -159,12 +243,12 @@ test("native copy success and failure are observable and terminal-safe", async (
 	});
 	await showMainThreadTreePicker({ setLabel() {} } as never, mock.ctx, {
 		createSelector,
-		copyToClipboard: async () => {
+		copyToClipboard: () => {
 			throw new Error("clipboard failed\u001b]52;c;ZXZpbA==\u0007");
 		},
 	});
 
-	assert.deepEqual(copied, ["copied text"]);
+	assert.deepEqual(copied, ["branch"]);
 	assert.ok(mock.notifications.some(({ message }) => message === "Copied selected message"));
 	const failure = mock.notifications.find(({ level }) => level === "error")?.message ?? "";
 	assert.match(failure, /Could not copy selected message: clipboard failed/);
@@ -175,6 +259,56 @@ test("native copy success and failure are observable and terminal-safe", async (
 		}),
 		false,
 	);
+});
+
+test("failed label persistence restores the previously displayed label", async () => {
+	const node = userNode("branch-entry", null, "branch");
+	node.label = "saved";
+	let displayedLabel: string | undefined = node.label;
+	const mock = createMockContext({
+		mode: "tui",
+		hasUI: true,
+		sessionManager: {
+			getTree: () => [node],
+			getLeafId: () => "branch-entry",
+			getEntry: () => node.entry,
+		},
+		custom: async (factory: unknown) => {
+			const harness = createCustomSelectorHarness(factory);
+			harness.handleInput("label");
+			harness.handleInput("escape");
+			return harness.resultPromise;
+		},
+	});
+
+	await showMainThreadTreePicker(
+		{
+			setLabel() {
+				throw new Error("read only");
+			},
+		} as never,
+		mock.ctx,
+		{
+			createSelector: (options) => ({
+				focused: false,
+				render: () => [displayedLabel ?? ""],
+				handleInput(data) {
+					if (data === "label") {
+						displayedLabel = "unsaved";
+						options.onLabelChange("branch-entry", "unsaved");
+					}
+					if (data === "escape") options.onCancel();
+				},
+				invalidate() {},
+				restoreLabel(_entryId, label) {
+					displayedLabel = label;
+				},
+			}),
+		},
+	);
+
+	assert.equal(displayedLabel, "saved");
+	assert.ok(mock.notifications.some(({ message }) => /Could not update tree label/u.test(message)));
 });
 
 test("native label editing writes only after the selector's explicit callback", async () => {
@@ -205,7 +339,7 @@ test("native label editing writes only after the selector's explicit callback", 
 		{ createSelector: createFakeSelector(() => {}) },
 	);
 
-	assert.deepEqual(labels, [{ entryId: "branch-entry", label: "checkpoint" }]);
+	assert.deepEqual(labels, [{ entryId: "branch-entry", label: "check[2Jpoint" }]);
 });
 
 test("native tree selector renders within narrow terminal widths", async () => {
@@ -233,12 +367,9 @@ test("native tree selector renders within narrow terminal widths", async () => {
 	});
 });
 
-test("disposing the tree picker closes without a stale clipboard notification", async () => {
+test("disposing the tree picker aborts and drains the pending clipboard operation", async () => {
 	const node = userNode("branch-entry", null, "branch");
-	let releaseCopy!: () => void;
-	const copyPending = new Promise<void>((resolve) => {
-		releaseCopy = resolve;
-	});
+	let copyAborted = false;
 	const mock = createMockContext({
 		mode: "tui",
 		hasUI: true,
@@ -251,17 +382,44 @@ test("disposing the tree picker closes without a stale clipboard notification", 
 			const harness = createCustomSelectorHarness(factory);
 			harness.handleInput("copy");
 			harness.dispose();
-			releaseCopy();
 			return harness.resultPromise;
 		},
 	});
 
 	const result = await showMainThreadTreePicker({ setLabel() {} } as never, mock.ctx, {
 		createSelector: createFakeSelector(() => {}),
-		copyToClipboard: async () => copyPending,
+		copyToClipboard: async (_text, signal) =>
+			new Promise<void>((_resolve, reject) => {
+				if (!signal) {
+					reject(new Error("missing abort signal"));
+					return;
+				}
+				signal.addEventListener(
+					"abort",
+					() => {
+						copyAborted = true;
+						reject(signal.reason);
+					},
+					{ once: true },
+				);
+			}),
 	});
 
 	assert.deepEqual(result, { kind: "closed" });
-	await Promise.resolve();
+	assert.equal(copyAborted, true);
 	assert.deepEqual(mock.notifications, []);
 });
+
+function hasTerminalControlInValue(value: unknown): boolean {
+	if (typeof value === "string") {
+		return [...value].some((character) => {
+			const code = character.charCodeAt(0);
+			return code <= 31 || (code >= 127 && code <= 159);
+		});
+	}
+	if (Array.isArray(value)) return value.some(hasTerminalControlInValue);
+	if (value !== null && typeof value === "object") {
+		return Object.values(value).some(hasTerminalControlInValue);
+	}
+	return false;
+}
