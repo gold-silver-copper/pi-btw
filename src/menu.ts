@@ -41,10 +41,14 @@ export interface ShowBtwCommandMenuOptions {
 	) => Promise<BtwSettings>;
 }
 
-export type BtwCommandMenuResult = "start" | "closed" | { kind: "resume"; threadId: string };
+export type BtwCommandMenuResult =
+	| "start"
+	| "tree"
+	| "closed"
+	| { kind: "resume"; threadId: string };
 
 type BtwMenuScreen = "main" | "resume" | "settings" | "invalid";
-type BtwMenuAction = "start" | "resume" | "set-thinking" | "set-remember";
+type BtwMenuAction = "start" | "start-tree" | "resume" | "set-thinking" | "set-remember";
 const SAME_AS_MAIN_THREAD = "Same as main thread";
 type BtwCustomOptions = Parameters<ExtensionCommandContext["ui"]["custom"]>[1];
 
@@ -72,6 +76,7 @@ export async function showBtwCommandMenu(
 	const displaySettingsPath = sanitizeSingleLine(settingsPath);
 	const resumeThreads = options.resumeThreads ?? [];
 	let startSelected = false;
+	let treeSelected = false;
 	let resumedThreadId: string | undefined;
 
 	const loadState = async (): Promise<BtwMenuState> => {
@@ -113,6 +118,12 @@ export async function showBtwCommandMenu(
 						label: "Start side thread",
 						description: "Open an empty side thread",
 						action: "start",
+					},
+					{
+						id: "start-tree",
+						label: "Start from main thread tree…",
+						description: "Choose context without switching the main branch",
+						action: "start-tree",
 					},
 					...(resumeThreads.length > 0
 						? [
@@ -184,6 +195,10 @@ export async function showBtwCommandMenu(
 				startSelected = true;
 				return { kind: "close" };
 			},
+			"start-tree": async () => {
+				treeSelected = true;
+				return { kind: "close" };
+			},
 			resume: async ({ itemId }: { itemId: string }) => {
 				if (!resumeThreads.some((thread) => thread.id === itemId)) {
 					return { kind: "rejected" } as const;
@@ -233,7 +248,35 @@ export async function showBtwCommandMenu(
 	);
 	if (result.kind !== "closed" || result.reason !== "close") return "closed";
 	if (resumedThreadId) return { kind: "resume", threadId: resumedThreadId };
+	if (treeSelected) return "tree";
 	return startSelected ? "start" : "closed";
+}
+
+export async function showBtwCustomPreservingEditor<T>(
+	ctx: ExtensionCommandContext,
+	factory: BtwCustomFactory<T>,
+): Promise<T | undefined> {
+	let liveEditorText = ctx.ui.getEditorText();
+	let completed = false;
+	const result = await ctx.ui.custom<T>((tui, theme, keybindings, done) =>
+		factory(tui, theme, keybindings, (value) => {
+			try {
+				liveEditorText = ctx.ui.getEditorText();
+			} catch {
+				// Keep completion finite if session replacement invalidates the editor context.
+			}
+			completed = true;
+			done(value);
+		}),
+	);
+	if (completed) {
+		try {
+			if (ctx.ui.getEditorText() !== liveEditorText) ctx.ui.setEditorText(liveEditorText);
+		} catch {
+			// A replaced context owns a different editor and must not receive stale restoration.
+		}
+	}
+	return result;
 }
 
 export async function runBtwMenuPreservingEditor(

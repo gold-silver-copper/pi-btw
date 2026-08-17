@@ -9,10 +9,7 @@ import {
 	BorderedLoader,
 	type ExtensionAPI,
 	type ExtensionCommandContext,
-	type KeybindingsManager,
-	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import type { Component, TUI } from "@earendil-works/pi-tui";
 import type { MenuContext, RunMenuResult } from "@narumitw/pi-tui-kit";
 import {
 	type BtwBringToMainSegment,
@@ -26,11 +23,13 @@ import {
 	summarizeBringToMain,
 } from "./bring-to-main.js";
 import { type RunBtwFullscreen, runBtwFullscreen } from "./fullscreen-ui.js";
+import { showMainThreadTreePicker } from "./main-thread-tree.js";
 import {
 	type BtwCommandMenuResult,
 	type BtwResumeThreadSummary,
 	runBtwMenuPreservingEditor,
 	showBtwCommandMenu,
+	showBtwCustomPreservingEditor,
 } from "./menu.js";
 import {
 	type BtwSettings,
@@ -222,6 +221,7 @@ export interface BtwExtensionDependencies {
 		ctx: ExtensionCommandContext,
 		resumeThreads: readonly BtwResumeThreadSummary[],
 	) => Promise<BtwCommandMenuResult>;
+	showTreePicker?: typeof showMainThreadTreePicker;
 	loadSettings?: typeof loadSettingsForCommand;
 	resolveModel?: typeof resolveBtwModelWithLoader;
 	runThread?: typeof runBtwThread;
@@ -230,6 +230,7 @@ export interface BtwExtensionDependencies {
 
 export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependencies = {}) {
 	const showCommandMenu = dependencies.showCommandMenu ?? showCommandMenuForBtw;
+	const showTreePicker = dependencies.showTreePicker ?? showMainThreadTreePicker;
 	const loadSettings = dependencies.loadSettings ?? loadSettingsForCommand;
 	const resolveModel = dependencies.resolveModel ?? resolveBtwModelWithLoader;
 	const runThread = dependencies.runThread ?? runBtwThread;
@@ -259,9 +260,37 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
 			}
 
 			let menuResult: BtwCommandMenuResult = "start";
+			let selectedConversationContext: string | undefined;
 			if (!question) {
-				menuResult = await showCommandMenu(pi, ctx, listResumeThreads());
-				if (menuResult === "closed") return;
+				while (true) {
+					menuResult = await showCommandMenu(pi, ctx, listResumeThreads());
+					if (menuResult === "closed") return;
+					if (menuResult !== "tree") break;
+
+					const treeResult = await showTreePicker(pi, ctx);
+					if (treeResult.kind === "closed") return;
+					if (treeResult.kind === "back") continue;
+					try {
+						if (!ctx.sessionManager.getEntry(treeResult.entryId)) {
+							notifySafely(ctx, "The selected main-thread entry is no longer available", "warning");
+							continue;
+						}
+						const branch = ctx.sessionManager.getBranch(treeResult.entryId);
+						if (branch.at(-1)?.id !== treeResult.entryId) {
+							notifySafely(
+								ctx,
+								"The selected main-thread branch is no longer available",
+								"warning",
+							);
+							continue;
+						}
+						selectedConversationContext = buildConversationContext(branch);
+						menuResult = "start";
+						break;
+					} catch {
+						return;
+					}
+				}
 			}
 
 			const settings = await loadSettings(ctx);
@@ -291,7 +320,8 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
 						state = {
 							id: `btw-${nextThreadNumber}`,
 							thread: createSideThread(
-								buildConversationContext(fullscreenCtx.sessionManager.getBranch()),
+								selectedConversationContext ??
+									buildConversationContext(fullscreenCtx.sessionManager.getBranch()),
 							),
 							thinkingLevel: settings.thinkingLevel ?? pi.getThinkingLevel(),
 							createdAt,
@@ -544,40 +574,6 @@ export async function runBtwThread({
 	} finally {
 		await Promise.allSettled([...pendingWrites]);
 	}
-}
-
-type BtwCustomFactory<T> = (
-	tui: TUI,
-	theme: Theme,
-	keybindings: KeybindingsManager,
-	done: (result: T) => void,
-) => Component;
-
-async function showBtwCustomPreservingEditor<T>(
-	ctx: ExtensionCommandContext,
-	factory: BtwCustomFactory<T>,
-): Promise<T | undefined> {
-	let liveEditorText = ctx.ui.getEditorText();
-	let completed = false;
-	const result = await ctx.ui.custom<T>((tui, theme, keybindings, done) =>
-		factory(tui, theme, keybindings, (value) => {
-			try {
-				liveEditorText = ctx.ui.getEditorText();
-			} catch {
-				// Keep completion finite if session replacement invalidates the editor context.
-			}
-			completed = true;
-			done(value);
-		}),
-	);
-	if (completed) {
-		try {
-			if (ctx.ui.getEditorText() !== liveEditorText) ctx.ui.setEditorText(liveEditorText);
-		} catch {
-			// A replaced context owns a different editor and must not receive stale restoration.
-		}
-	}
-	return result;
 }
 
 interface ChooseBringToMainDependencies {

@@ -8,7 +8,8 @@ Use it when you want to ask a temporary question, inspect context, or get a shor
 
 ## ✨ Features
 
-- Adds a `/btw` menu for starting or resuming an in-memory side thread or changing pi-btw settings.
+- Adds a `/btw` menu for starting or resuming an in-memory side thread, choosing context from the main session tree, or changing pi-btw settings.
+- Starts a fresh side thread from any persisted main-session branch without switching the main branch.
 - Keeps `/btw <question>` as a direct fast path that always starts a fresh side thread.
 - Answers side questions in a dedicated, scrollable full-screen UI.
 - Keeps mouse-drag copying stable while the main agent continues running in the background.
@@ -59,6 +60,11 @@ Examples:
 ```
 
 Running `/btw` alone opens a menu with **Start side thread** selected first.
+**Start from main thread tree…** opens Pi's native session tree and uses the root-to-selected-entry path, including the selected entry, as the new side thread's context.
+Selecting context does not navigate, fork, append to, or switch the main conversation, and it preserves the main editor draft.
+The selector is a snapshot of entries persisted when it opens, while the resulting side thread keeps an immutable context snapshot even if the main conversation later changes.
+Press `Escape` to return to the `/btw` menu or `Ctrl+C` to close the flow.
+The native tree controls remain available: copying reports success or failure, and an explicit `Shift+L` label edit persists through Pi as the only main-session mutation available from this selector.
 When the current Pi session has non-empty side threads in memory, **Resume side thread** opens a bounded searchable choice list.
 Search matches the displayed first question and question count while returning the thread's raw in-memory ID.
 **Settings** changes the starting thinking level and whether shortcut changes for fixed levels are remembered.
@@ -188,6 +194,7 @@ packages/pi-btw/
 │   ├── index.ts
 │   ├── btw.ts
 │   ├── bring-to-main.ts
+│   ├── main-thread-tree.ts
 │   ├── menu.ts
 │   ├── settings.ts
 │   ├── side-thread.ts

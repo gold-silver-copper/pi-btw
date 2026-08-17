@@ -444,6 +444,182 @@ test("btw same-as-main mode starts fresh threads from the current main level wit
 	assert.deepEqual(mock.thinkingLevels, []);
 });
 
+test("btw starts a fresh side thread from a selected main-thread branch snapshot", async () => {
+	const mock = createMockPi();
+	const selected = {
+		model: { provider: "test", id: "side" } as Model<Api>,
+		auth: { apiKey: "key" },
+	};
+	const rootEntry = {
+		type: "message",
+		id: "root",
+		parentId: null,
+		timestamp: "2026-01-01T00:00:01.000Z",
+		message: { role: "user", content: "Shared root context" },
+	};
+	const selectedEntry = {
+		type: "message",
+		id: "abandoned-user",
+		parentId: "root",
+		timestamp: "2026-01-01T00:00:02.000Z",
+		message: { role: "user", content: "Selected abandoned branch" },
+	};
+	const activeEntry = {
+		type: "message",
+		id: "active-user",
+		parentId: "root",
+		timestamp: "2026-01-01T00:00:03.000Z",
+		message: { role: "user", content: "Current active branch" },
+	};
+	const entries = [rootEntry, selectedEntry, activeEntry];
+	const branchReads: Array<string | undefined> = [];
+	let activeLeaf = "active-user";
+	let settingsLoads = 0;
+	let modelResolutions = 0;
+	let capturedContext = "";
+	const interactive = createMockContext({
+		mode: "tui",
+		hasUI: true,
+		editorText: "main draft",
+		sessionManager: {
+			getLeafId: () => activeLeaf,
+			getEntries: () => [...entries],
+			getEntry: (id: string) => entries.find((entry) => entry.id === id),
+			getBranch: (id?: string) => {
+				branchReads.push(id);
+				return id === "abandoned-user" ? [rootEntry, selectedEntry] : [rootEntry, activeEntry];
+			},
+		},
+	});
+	btw(mock.pi, {
+		showCommandMenu: async () => "tree",
+		showTreePicker: async () => {
+			entries.push({
+				...activeEntry,
+				id: "later-active-assistant",
+				message: { role: "assistant", content: "Later active response" },
+			});
+			activeLeaf = "later-active-assistant";
+			return { kind: "selected", entryId: "abandoned-user" };
+		},
+		loadSettings: async () => {
+			settingsLoads += 1;
+			return {};
+		},
+		resolveModel: async () => {
+			modelResolutions += 1;
+			return { kind: "selected", selected };
+		},
+		runFullscreen: async (ctx, run) => run(ctx),
+		runThread: (async (options: { state: { thread: { conversationContext: string } } }) => {
+			capturedContext = options.state.thread.conversationContext;
+			return { kind: "closed" };
+		}) as never,
+	});
+
+	await mock.commands.get("btw")?.handler("", interactive.ctx);
+
+	assert.deepEqual(branchReads, ["abandoned-user"]);
+	assert.match(capturedContext, /Shared root context/);
+	assert.match(capturedContext, /Selected abandoned branch/);
+	assert.doesNotMatch(capturedContext, /Current active branch|Later active response/);
+	assert.equal(settingsLoads, 1);
+	assert.equal(modelResolutions, 1);
+	assert.equal(activeLeaf, "later-active-assistant");
+	assert.equal(interactive.editorText, "main draft");
+	assert.equal(entries.length, 4);
+});
+
+test("btw returns from a cancelled tree picker to the menu without resolving credentials", async () => {
+	const mock = createMockPi();
+	const menuResults = ["tree", "closed"];
+	let pickerCalls = 0;
+	let settingsLoads = 0;
+	let modelResolutions = 0;
+	let threadRuns = 0;
+	btw(mock.pi, {
+		showCommandMenu: async () => menuResults.shift() as never,
+		showTreePicker: async () => {
+			pickerCalls += 1;
+			return { kind: "back" };
+		},
+		loadSettings: async () => {
+			settingsLoads += 1;
+			return {};
+		},
+		resolveModel: async () => {
+			modelResolutions += 1;
+			return { kind: "unavailable" };
+		},
+		runThread: async () => {
+			threadRuns += 1;
+			return { kind: "closed" };
+		},
+	});
+
+	await mock.commands.get("btw")?.handler("", createMockContext({ mode: "tui", hasUI: true }).ctx);
+
+	assert.equal(pickerCalls, 1);
+	assert.equal(settingsLoads, 0);
+	assert.equal(modelResolutions, 0);
+	assert.equal(threadRuns, 0);
+});
+
+test("btw closes from a tree picker Ctrl+C without resolving credentials or creating a thread", async () => {
+	const mock = createMockPi();
+	let modelResolutions = 0;
+	let threadRuns = 0;
+	btw(mock.pi, {
+		showCommandMenu: async () => "tree",
+		showTreePicker: async () => ({ kind: "closed" }),
+		resolveModel: async () => {
+			modelResolutions += 1;
+			return { kind: "unavailable" };
+		},
+		runThread: async () => {
+			threadRuns += 1;
+			return { kind: "closed" };
+		},
+	});
+
+	await mock.commands.get("btw")?.handler("", createMockContext({ mode: "tui", hasUI: true }).ctx);
+
+	assert.equal(modelResolutions, 0);
+	assert.equal(threadRuns, 0);
+});
+
+test("btw rejects a stale selected tree entry without falling back to the active branch", async () => {
+	const mock = createMockPi();
+	const menuResults = ["tree", "closed"];
+	let branchReads = 0;
+	let modelResolutions = 0;
+	const interactive = createMockContext({
+		mode: "tui",
+		hasUI: true,
+		sessionManager: {
+			getEntry: () => undefined,
+			getBranch: () => {
+				branchReads += 1;
+				return [];
+			},
+		},
+	});
+	btw(mock.pi, {
+		showCommandMenu: async () => menuResults.shift() as never,
+		showTreePicker: async () => ({ kind: "selected", entryId: "missing" }),
+		resolveModel: async () => {
+			modelResolutions += 1;
+			return { kind: "unavailable" };
+		},
+	});
+
+	await mock.commands.get("btw")?.handler("", interactive.ctx);
+
+	assert.equal(branchReads, 0);
+	assert.equal(modelResolutions, 0);
+	assert.ok(interactive.notifications.some(({ message }) => /no longer available/i.test(message)));
+});
+
 test("btw keeps multiple in-memory threads, resumes the selected one, and keeps direct questions fresh", async () => {
 	const mock = createMockPi({ thinkingLevel: "low" });
 	const selected = {
@@ -692,6 +868,19 @@ test("buildConversationContext formats user, assistant, and tool content", () =>
 	assert.match(context, /User: Inspect this\nTool call: read\(\{"path":"README\.md"\}\)/);
 	assert.match(context, /Assistant \(length\): Tool result from read: \{"ok":true\}/);
 	assert.doesNotMatch(context, /skip/);
+});
+
+test("buildConversationContext keeps its 40,000-character tail bound", () => {
+	const context = buildConversationContext([
+		{
+			type: "message",
+			message: { role: "user", content: `old-marker-${"x".repeat(41_000)}-new-marker` },
+		},
+	]);
+
+	assert.match(context, /^\[Earlier context omitted; showing the last 40000 characters\.\]/);
+	assert.equal(context.endsWith("-new-marker"), true);
+	assert.doesNotMatch(context, /old-marker/);
 });
 
 test("buildUserPrompt falls back when no conversation context exists", () => {

@@ -88,15 +88,42 @@ test("btw no-argument menu selects Start side thread first and preserves the edi
 			availableThinkingLevels: ["off", "low", "medium", "high"],
 		});
 		await tui.waitForOpen();
-		const rendered = tui.render().join("\n");
+		const rendered = tui.render(140).join("\n");
 		assert.match(rendered, /Pi BTW/);
 		assert.match(rendered, /→ Start side thread/);
+		assert.match(rendered, /Start from main thread tree…/);
+		assert.match(rendered, /without switching the main branch/);
 		assert.doesNotMatch(rendered, /Resume side thread/);
 		assert.match(rendered, /Settings/);
 		tui.press("tui.select.confirm");
 
 		assert.equal(await running, "start");
 		assert.equal(ctx.ui.getEditorText(), "draft");
+		await assert.rejects(readFile(settingsPath, "utf8"), { code: "ENOENT" });
+	});
+});
+
+test("btw menu returns the main-thread tree action without changing settings or the editor", async () => {
+	await withMenu(async ({ settingsPath, tui, ctx }) => {
+		let settingsReads = 0;
+		const running = showBtwCommandMenu(ctx, {
+			settingsPath,
+			currentThinkingLevel: "low",
+			availableThinkingLevels: ["off", "low"],
+			readSettings: async () => {
+				settingsReads += 1;
+				return { kind: "missing" };
+			},
+		});
+		await tui.waitForOpen();
+		tui.press("tui.select.down");
+		assert.match(tui.render().join("\n"), /→ Start from main thread tree…/);
+		ctx.ui.setEditorText("newer draft");
+		tui.press("tui.select.confirm");
+
+		assert.equal(await running, "tree");
+		assert.equal(settingsReads, 1);
+		assert.equal(ctx.ui.getEditorText(), "newer draft");
 		await assert.rejects(readFile(settingsPath, "utf8"), { code: "ENOENT" });
 	});
 });
@@ -114,6 +141,7 @@ test("btw menu selects an in-memory side thread through a Kit choice screen", as
 		});
 		await tui.waitForOpen();
 		assert.match(tui.render().join("\n"), /→ Start side thread/);
+		tui.press("tui.select.down");
 		tui.press("tui.select.down");
 		assert.match(tui.render().join("\n"), /→ Resume side thread/);
 		tui.press("tui.select.confirm");
@@ -151,6 +179,7 @@ test("btw Resume search keeps duplicate titles tied to raw thread ids", async ()
 		});
 		await tui.waitForOpen();
 		tui.press("tui.select.down");
+		tui.press("tui.select.down");
 		tui.press("tui.select.confirm");
 		await tui.waitForOpen();
 		tui.type("1 question");
@@ -174,6 +203,7 @@ test("btw Resume choice returns to the main menu with Back and closes with Ctrl+
 		});
 		await tui.waitForOpen();
 		tui.press("tui.select.down");
+		tui.press("tui.select.down");
 		tui.press("tui.select.confirm");
 		await tui.waitForOpen();
 		tui.press("tui.select.cancel");
@@ -189,6 +219,7 @@ test("btw Resume choice returns to the main menu with Back and closes with Ctrl+
 
 async function openSettings(tui: ReturnType<typeof createTuiHarness>): Promise<void> {
 	await tui.waitForOpen();
+	tui.press("tui.select.down");
 	tui.press("tui.select.down");
 	assert.match(tui.render().join("\n"), /→ Settings/);
 	tui.press("tui.select.confirm");
