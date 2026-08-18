@@ -1,5 +1,11 @@
 # @narumitw/pi-btw
 
+## 0.54.0
+
+### Minor Changes
+
+- b5c0682: Add native mouse-wheel and trackpad scrolling to side-thread transcript history.
+
 ## 0.53.0
 
 ### Minor Changes
