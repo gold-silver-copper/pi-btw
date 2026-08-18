@@ -96,10 +96,12 @@ Type another question and press `Enter` to queue it as `Steering`; queued questi
 submission order and answered one at a time after the active response completes.
 A queued question uses the side thread's thinking level when its turn begins.
 A failed active response is shown in the transcript and does not discard later steering questions.
-The footer shows `PgUp`/`PgDn` only when history can scroll; press `Ctrl+C` to cancel the active
-response and discard the ephemeral side-thread draft and steering queue. Completed questions,
-answers, and visible errors remain available through Resume until the current extension instance
-ends. Steering remains entirely inside pi-btw and never appends to the main conversation or editor.
+Use the mouse wheel or trackpad to scroll transcript history like Pi's main thread.
+Keyboard `PgUp`/`PgDn` history navigation remains available.
+It appears in the footer only when the transcript can scroll.
+Press `Ctrl+C` to cancel the active response and discard the ephemeral side-thread draft and steering queue.
+Completed questions, answers, and visible errors remain available through Resume until the current extension instance ends.
+Steering remains entirely inside pi-btw and never appends to the main conversation or editor.
 
 After at least one successful answer, press `Ctrl+R` to bring selected context to the main
 editor. The scope menu shows the size of the latest question and answer and the entire side

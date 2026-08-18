@@ -16,10 +16,13 @@ import {
 	Loader,
 	Markdown,
 	matchesKey,
+	ScrollView,
 	type TUI,
 	truncateToWidth,
+	VStack,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
+import type { BtwFullscreenLayoutComponent } from "./fullscreen-ui.js";
 import type { BtwThinkingLevel, SideThreadTurn } from "./side-thread.js";
 import { sanitizeSingleLine } from "./text.js";
 
@@ -28,6 +31,21 @@ const MAX_STEERING_DISPLAY_LINES = 3;
 const OSC133_MARKERS = ["\u001b]133;A\u0007", "\u001b]133;B\u0007", "\u001b]133;C\u0007"];
 // Pi renders a spacer above the custom component and a two-line built-in footer below it.
 const RESERVED_APP_LINES = 3;
+
+// A temporary fit after manual scrolling must not silently resume following new output.
+class PreservingScrollView extends ScrollView {
+	override updateLayout(
+		contentHeight: number,
+		viewportHeight: number,
+		requestRender: () => void,
+	): void {
+		const preserveManualPosition = !this.isFollowingEnd;
+		super.updateLayout(contentHeight, viewportHeight, requestRender);
+		if (preserveManualPosition && this.isFollowingEnd) {
+			this.scrollTo(this.scrollTop, { disableFollow: true });
+		}
+	}
+}
 
 export type TranscriptPagerAction =
 	| { kind: "submit"; question: string }
@@ -49,14 +67,13 @@ export interface BtwAnsweringViewOptions {
 	};
 }
 
-export class BtwTranscriptPager implements Component, Focusable {
+export class BtwTranscriptPager implements BtwFullscreenLayoutComponent, Focusable {
 	private readonly transcriptComponents: Component[];
 	private readonly editor: Editor;
 	private readonly canBringToMain: boolean;
-	private scrollOffset = 0;
+	private readonly scrollView: ScrollView;
+	private readonly layoutRoot: VStack;
 	private lastContentLineCount = 0;
-	private lastViewportHeight = 1;
-	private followBottom: boolean;
 	private warning: string | undefined;
 	private finished = false;
 	private isFocused = false;
@@ -75,7 +92,6 @@ export class BtwTranscriptPager implements Component, Focusable {
 	) {
 		this.transcriptComponents = buildTranscriptComponents(turns, this.theme);
 		this.canBringToMain = turns.some((turn) => turn.kind === "answered");
-		this.followBottom = options.startAtBottom ?? false;
 		this.thinkingLevel = options.thinking?.level;
 		const editorTheme: EditorTheme = {
 			borderColor: (text) => this.theme.fg("accent", text),
@@ -101,6 +117,17 @@ export class BtwTranscriptPager implements Component, Focusable {
 			this.finished = true;
 			this.onAction({ kind: "submit", question });
 		};
+		const transcript = this.createTranscriptComponent();
+		this.scrollView = new PreservingScrollView(transcript, {
+			follow: options.startAtBottom ? "end" : "none",
+			primary: true,
+		});
+		this.layoutRoot = new VStack([
+			{ component: this.createHeaderComponent(), basis: 1, shrink: 0, minSize: 1 },
+			{ component: this.scrollView, basis: 0, grow: 1, minSize: 0 },
+			{ component: this.createFooterComponent(), basis: 1, shrink: 0, minSize: 1 },
+			{ component: this.editor, basis: "auto", shrink: 1, minSize: 0 },
+		]);
 	}
 
 	get focused(): boolean {
@@ -110,6 +137,10 @@ export class BtwTranscriptPager implements Component, Focusable {
 	set focused(value: boolean) {
 		this.isFocused = value;
 		this.editor.focused = value;
+	}
+
+	getFullscreenLayout(): Component {
+		return this.layoutRoot;
 	}
 
 	render(width: number): string[] {
@@ -122,13 +153,13 @@ export class BtwTranscriptPager implements Component, Focusable {
 		);
 		const contentLines = renderTranscriptLines(this.transcriptComponents, safeWidth);
 		this.lastContentLineCount = contentLines.length;
-		this.lastViewportHeight = viewportHeight;
-		if (this.followBottom) this.scrollOffset = this.getMaxScrollOffset();
-		this.clampScrollOffset();
+		this.scrollView.updateLayout(contentLines.length, viewportHeight, () =>
+			this.tui.requestRender(),
+		);
 
 		return fitComposerLayout(
 			renderSideThreadHeader(safeWidth, this.theme, this.thinkingLevel),
-			contentLines.slice(this.scrollOffset, this.scrollOffset + viewportHeight),
+			contentLines.slice(this.scrollView.scrollTop, this.scrollView.scrollTop + viewportHeight),
 			this.renderFooter(safeWidth),
 			editorLines,
 			availableRows,
@@ -164,15 +195,12 @@ export class BtwTranscriptPager implements Component, Focusable {
 			return;
 		}
 		if (matchesKey(data, Key.pageUp)) {
-			const previousOffset = this.scrollOffset;
-			this.scrollBy(-this.lastViewportHeight);
-			if (this.scrollOffset < previousOffset) this.followBottom = false;
+			this.scrollView.scrollBy(-Math.max(1, this.scrollView.viewportHeight));
 			this.tui.requestRender();
 			return;
 		}
 		if (matchesKey(data, Key.pageDown)) {
-			this.scrollBy(this.lastViewportHeight);
-			this.followBottom = this.scrollOffset >= this.getMaxScrollOffset();
+			this.scrollView.scrollBy(Math.max(1, this.scrollView.viewportHeight));
 			this.tui.requestRender();
 			return;
 		}
@@ -181,8 +209,7 @@ export class BtwTranscriptPager implements Component, Focusable {
 	}
 
 	invalidate(): void {
-		for (const component of this.transcriptComponents) component.invalidate();
-		this.editor.invalidate();
+		this.layoutRoot.invalidate();
 	}
 
 	dispose(): void {
@@ -218,7 +245,7 @@ export class BtwTranscriptPager implements Component, Focusable {
 						? compactBase
 						: fallbackBase;
 		if (scrollable) {
-			const history = ` • ${this.scrollOffset > 0 ? "↑ older" : "↓ newer"} • PgUp/PgDn history`;
+			const history = ` • ${this.scrollView.scrollTop > 0 ? "↑ older" : "↓ newer"} • PgUp/PgDn history`;
 			const compactHistory = " • PgUp/PgDn";
 			const compactScrollable = this.canBringToMain
 				? "Enter • Ctrl+R • Ctrl+C • PgUp/PgDn"
@@ -238,29 +265,46 @@ export class BtwTranscriptPager implements Component, Focusable {
 		return truncateToWidth(this.theme.fg("muted", hints), width);
 	}
 
-	private scrollBy(delta: number): void {
-		this.scrollOffset += delta;
-		this.clampScrollOffset();
+	private createHeaderComponent(): Component {
+		return {
+			render: (width) => [renderSideThreadHeader(width, this.theme, this.thinkingLevel)],
+			invalidate() {},
+		};
 	}
 
-	private clampScrollOffset(): void {
-		this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, this.getMaxScrollOffset()));
+	private createTranscriptComponent(): Component {
+		return {
+			render: (width) => {
+				const lines = renderTranscriptLines(this.transcriptComponents, width);
+				this.lastContentLineCount = lines.length;
+				return lines;
+			},
+			invalidate: () => {
+				for (const component of this.transcriptComponents) component.invalidate();
+			},
+		};
+	}
+
+	private createFooterComponent(): Component {
+		return {
+			render: (width) => [this.renderFooter(width)],
+			invalidate() {},
+		};
 	}
 
 	private getMaxScrollOffset(): number {
-		return Math.max(0, this.lastContentLineCount - this.lastViewportHeight);
+		return Math.max(0, this.lastContentLineCount - this.scrollView.viewportHeight);
 	}
 }
 
-export class BtwAnsweringView implements Component, Focusable {
+export class BtwAnsweringView implements BtwFullscreenLayoutComponent, Focusable {
 	private readonly transcriptComponents: Component[];
 	private readonly loader: Loader;
 	private readonly editor: Editor | undefined;
 	private readonly controller = new AbortController();
-	private scrollOffset = 0;
+	private readonly scrollView: ScrollView;
+	private readonly layoutRoot: VStack;
 	private lastContentLineCount = 0;
-	private lastViewportHeight = 1;
-	private followBottom = true;
 	private warning: string | undefined;
 	private finished = false;
 	private isFocused = false;
@@ -308,6 +352,23 @@ export class BtwAnsweringView implements Component, Focusable {
 				this.warning = undefined;
 			};
 		}
+		const transcript = this.createTranscriptComponent();
+		this.scrollView = new PreservingScrollView(transcript, { follow: "end", primary: true });
+		this.layoutRoot = new VStack([
+			{ component: this.createHeaderComponent(), basis: 1, shrink: 0, minSize: 1 },
+			{ component: this.scrollView, basis: 0, grow: 1, minSize: 0 },
+			{
+				component: this.createSteeringComponent(),
+				basis: "auto",
+				shrink: 1,
+				minSize: 0,
+				maxSize: MAX_STEERING_DISPLAY_LINES,
+			},
+			{ component: this.createFooterComponent(), basis: 1, shrink: 0, minSize: 1 },
+			...(this.editor
+				? [{ component: this.editor, basis: "auto" as const, shrink: 1, minSize: 0 }]
+				: []),
+		]);
 	}
 
 	get focused(): boolean {
@@ -321,6 +382,10 @@ export class BtwAnsweringView implements Component, Focusable {
 
 	get signal(): AbortSignal {
 		return this.controller.signal;
+	}
+
+	getFullscreenLayout(): Component {
+		return this.layoutRoot;
 	}
 
 	render(width: number): string[] {
@@ -343,13 +408,13 @@ export class BtwAnsweringView implements Component, Focusable {
 		);
 		const contentLines = renderTranscriptLines(this.transcriptComponents, safeWidth);
 		this.lastContentLineCount = contentLines.length;
-		this.lastViewportHeight = viewportHeight;
-		if (this.followBottom) this.scrollOffset = this.getMaxScrollOffset();
-		this.clampScrollOffset();
+		this.scrollView.updateLayout(contentLines.length, viewportHeight, () =>
+			this.tui.requestRender(),
+		);
 
 		return fitComposerLayout(
 			renderSideThreadHeader(safeWidth, this.theme, this.thinkingLevel),
-			contentLines.slice(this.scrollOffset, this.scrollOffset + viewportHeight),
+			contentLines.slice(this.scrollView.scrollTop, this.scrollView.scrollTop + viewportHeight),
 			this.renderFooter(safeWidth),
 			editorLines,
 			availableRows,
@@ -383,15 +448,12 @@ export class BtwAnsweringView implements Component, Focusable {
 			return;
 		}
 		if (matchesKey(data, Key.pageUp)) {
-			const previousOffset = this.scrollOffset;
-			this.scrollBy(-this.lastViewportHeight);
-			if (this.scrollOffset < previousOffset) this.followBottom = false;
+			this.scrollView.scrollBy(-Math.max(1, this.scrollView.viewportHeight));
 			this.tui.requestRender();
 			return;
 		}
 		if (matchesKey(data, Key.pageDown)) {
-			this.scrollBy(this.lastViewportHeight);
-			this.followBottom = this.scrollOffset >= this.getMaxScrollOffset();
+			this.scrollView.scrollBy(Math.max(1, this.scrollView.viewportHeight));
 			this.tui.requestRender();
 			return;
 		}
@@ -400,9 +462,7 @@ export class BtwAnsweringView implements Component, Focusable {
 	}
 
 	invalidate(): void {
-		for (const component of this.transcriptComponents) component.invalidate();
-		this.loader.invalidate();
-		this.editor?.invalidate();
+		this.layoutRoot.invalidate();
 	}
 
 	finish(): void {
@@ -442,17 +502,48 @@ export class BtwAnsweringView implements Component, Focusable {
 		return truncateToWidth(`${loaderLine} • ${this.theme.fg("muted", selectedHints)}`, width);
 	}
 
-	private scrollBy(delta: number): void {
-		this.scrollOffset += delta;
-		this.clampScrollOffset();
+	private createHeaderComponent(): Component {
+		return {
+			render: (width) => [renderSideThreadHeader(width, this.theme, this.thinkingLevel)],
+			invalidate() {},
+		};
 	}
 
-	private clampScrollOffset(): void {
-		this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, this.getMaxScrollOffset()));
+	private createTranscriptComponent(): Component {
+		return {
+			render: (width) => {
+				const lines = renderTranscriptLines(this.transcriptComponents, width);
+				this.lastContentLineCount = lines.length;
+				return lines;
+			},
+			invalidate: () => {
+				for (const component of this.transcriptComponents) component.invalidate();
+			},
+		};
+	}
+
+	private createSteeringComponent(): Component {
+		return {
+			render: (width) =>
+				renderSteeringLines(
+					this.options.steering?.questions ?? [],
+					width,
+					this.theme,
+					MAX_STEERING_DISPLAY_LINES,
+				),
+			invalidate() {},
+		};
+	}
+
+	private createFooterComponent(): Component {
+		return {
+			render: (width) => [this.renderFooter(width)],
+			invalidate: () => this.loader.invalidate(),
+		};
 	}
 
 	private getMaxScrollOffset(): number {
-		return Math.max(0, this.lastContentLineCount - this.lastViewportHeight);
+		return Math.max(0, this.lastContentLineCount - this.scrollView.viewportHeight);
 	}
 }
 

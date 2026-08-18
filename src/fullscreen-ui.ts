@@ -21,7 +21,14 @@ type BtwCustomFactory<T> = (
 	done: (result: T) => void,
 ) => (Component & { dispose?(): void }) | Promise<Component & { dispose?(): void }>;
 
-type BtwFullscreenTui = TUI & { flash?: (message: string, durationMs?: number) => void };
+type BtwFullscreenTui = TUI & {
+	flash?: (message: string, durationMs?: number) => void;
+	setLayoutRoot(component: Component | undefined): void;
+};
+
+export interface BtwFullscreenLayoutComponent extends Component {
+	getFullscreenLayout(): Component;
+}
 
 export type BtwFullscreenTuiFactory = (parent: TUI) => BtwFullscreenTui;
 
@@ -223,6 +230,7 @@ class BtwFullscreenHost<T> implements Component {
 			let component: (Component & { dispose?(): void }) | undefined;
 			let overlay: OverlayHandle | undefined;
 			let mounted = false;
+			let layoutMounted = false;
 			let factorySettled = false;
 			let closed = false;
 			let promiseSettled = false;
@@ -243,6 +251,7 @@ class BtwFullscreenHost<T> implements Component {
 				let cleanupError: unknown;
 				try {
 					if (overlay) overlay.hide();
+					else if (mounted && layoutMounted) fullscreen.setLayoutRoot(undefined);
 					else if (mounted && component) fullscreen.removeChild(component);
 				} catch (error) {
 					cleanupError = error;
@@ -327,8 +336,13 @@ class BtwFullscreenHost<T> implements Component {
 						options.onHandle?.(overlay);
 					} else {
 						fullscreen.clear();
-						fullscreen.addChild(component);
 						mounted = true;
+						if (isFullscreenLayoutComponent(component)) {
+							layoutMounted = true;
+							fullscreen.setLayoutRoot(component.getFullscreenLayout());
+						} else {
+							fullscreen.addChild(component);
+						}
 						fullscreen.setFocus(component);
 						fullscreen.requestRender();
 					}
@@ -336,4 +350,10 @@ class BtwFullscreenHost<T> implements Component {
 				.catch(fail);
 		});
 	}
+}
+
+function isFullscreenLayoutComponent(
+	component: Component,
+): component is BtwFullscreenLayoutComponent {
+	return "getFullscreenLayout" in component && typeof component.getFullscreenLayout === "function";
 }

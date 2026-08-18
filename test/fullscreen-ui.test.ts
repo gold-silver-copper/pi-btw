@@ -7,7 +7,7 @@ interface FakeComponent extends Component {
 	dispose(): void;
 }
 
-function createHarness(options: { fullscreenStopError?: Error } = {}) {
+function createHarness(options: { fullscreenStopError?: Error; layoutMountError?: Error } = {}) {
 	const events: string[] = [];
 	let outerComponent: FakeComponent | undefined;
 	let outerDone: ((value: unknown) => void) | undefined;
@@ -40,6 +40,11 @@ function createHarness(options: { fullscreenStopError?: Error } = {}) {
 			events.push("fullscreen.remove");
 			if (active === component) active = undefined;
 		},
+		setLayoutRoot(component: Component | undefined) {
+			events.push(component ? "fullscreen.layout" : "fullscreen.layout.clear");
+			active = component;
+			if (component && options.layoutMountError) throw options.layoutMountError;
+		},
 		setFocus(component: Component | null) {
 			events.push(component ? "fullscreen.focus" : "fullscreen.unfocus");
 		},
@@ -59,7 +64,7 @@ function createHarness(options: { fullscreenStopError?: Error } = {}) {
 		flash(message: string) {
 			events.push(`fullscreen.flash:${message}`);
 		},
-	} as unknown as TUI;
+	} as unknown as ReturnType<BtwFullscreenTuiFactory>;
 	const createTui: BtwFullscreenTuiFactory = () => fullscreen;
 	const notifications: string[] = [];
 	const ctx = {
@@ -292,6 +297,91 @@ test("dedicated fullscreen owns the terminal while side custom UI runs and resto
 		"parent.start",
 		"parent.renderNow:false",
 	]);
+});
+
+test("dedicated fullscreen mounts only opt-in components as explicit viewport layouts", async () => {
+	const harness = createHarness();
+	let closeSide: (() => void) | undefined;
+	const layoutRoot: Component = {
+		render: () => ["layout root"],
+		invalidate() {},
+	};
+	const running = runBtwFullscreen(
+		harness.ctx,
+		(ctx) =>
+			ctx.ui.custom<"closed">((_tui, _theme, _keys, done) => {
+				closeSide = () => done("closed");
+				return {
+					render: () => ["side"],
+					invalidate() {},
+					dispose() {},
+					getFullscreenLayout: () => layoutRoot,
+				};
+			}),
+		{ createTui: harness.createTui },
+	);
+	await flushAsyncWork();
+	assert.ok(closeSide);
+	assert.equal(harness.events.includes("fullscreen.layout"), true);
+	assert.equal(harness.events.includes("fullscreen.add"), false);
+	closeSide();
+
+	assert.equal(await running, "closed");
+	assert.equal(harness.events.includes("fullscreen.layout.clear"), true);
+});
+
+test("a layout mount failure clears the root, disposes the component, and restores the parent", async () => {
+	const harness = createHarness({ layoutMountError: new Error("layout mount failed") });
+	await assert.rejects(
+		runBtwFullscreen(
+			harness.ctx,
+			(ctx) =>
+				ctx.ui.custom((_tui, _theme, _keys, _done) => ({
+					render: () => ["side"],
+					invalidate() {},
+					dispose() {
+						harness.events.push("component.dispose");
+					},
+					getFullscreenLayout: () => ({
+						render: () => ["layout root"],
+						invalidate() {},
+					}),
+				})),
+			{ createTui: harness.createTui },
+		),
+		/layout mount failed/,
+	);
+
+	assert.equal(harness.events.includes("fullscreen.layout.clear"), true);
+	assert.equal(harness.events.filter((event) => event === "component.dispose").length, 1);
+	assert.equal(harness.events.filter((event) => event === "fullscreen.stop:true").length, 1);
+	assert.equal(harness.events.filter((event) => event === "parent.start").length, 1);
+});
+
+test("dedicated fullscreen keeps ordinary custom components on the implicit document path", async () => {
+	const harness = createHarness();
+	let closeSide: (() => void) | undefined;
+	const running = runBtwFullscreen(
+		harness.ctx,
+		(ctx) =>
+			ctx.ui.custom<"closed">((_tui, _theme, _keys, done) => {
+				closeSide = () => done("closed");
+				return {
+					render: () => ["side"],
+					invalidate() {},
+					dispose() {},
+				};
+			}),
+		{ createTui: harness.createTui },
+	);
+	await flushAsyncWork();
+	assert.ok(closeSide);
+	assert.equal(harness.events.includes("fullscreen.add"), true);
+	assert.equal(harness.events.includes("fullscreen.layout"), false);
+	closeSide();
+
+	assert.equal(await running, "closed");
+	assert.equal(harness.events.includes("fullscreen.remove"), true);
 });
 
 test("dedicated fullscreen restores the parent before propagating a side-flow error", async () => {
