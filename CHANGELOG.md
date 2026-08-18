@@ -1,5 +1,12 @@
 # @narumitw/pi-btw
 
+## 0.54.1
+
+### Patch Changes
+
+- Updated dependencies [8bead31]
+  - @narumitw/pi-tui-kit@0.56.0
+
 ## 0.54.0
 
 ### Minor Changes
