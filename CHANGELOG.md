@@ -1,5 +1,11 @@
 # @narumitw/pi-btw
 
+## 0.55.0
+
+### Minor Changes
+
+- 79bc155: Add themed fullscreen transcript search and verified host clipboard feedback for mouse selections.
+
 ## 0.54.2
 
 ### Patch Changes
