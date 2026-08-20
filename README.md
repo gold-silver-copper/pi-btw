@@ -41,6 +41,10 @@ Try this package locally from the repository root:
 pi -e ./packages/pi-btw
 ```
 
+The package declares `dist/index.ts`, so an unbuilt local checkout must run `npm --workspace @narumitw/pi-btw run build` before Pi loads the package directory.
+
+`just try btw` runs that build automatically.
+
 ## 🚀 Usage
 
 Open the pi-btw menu or provide the first question immediately:
@@ -192,6 +196,9 @@ Normal assistant messages become part of the main Pi conversation and can distra
 
 ```txt
 packages/pi-btw/
+├── dist/                  # Generated TypeScript runtime loaded by Jiti
+├── scripts/
+│   └── build-runtime.mjs  # Deterministic runtime builder and boundary validator
 ├── src/
 │   ├── index.ts
 │   ├── btw.ts
@@ -213,10 +220,12 @@ The package exposes its Pi extension through `package.json`:
 ```json
 {
   "pi": {
-    "extensions": ["./src/index.ts"]
+    "extensions": ["./dist/index.ts"]
   }
 }
 ```
+
+The generated runtime is built from the authoritative `src/index.ts` graph and does not import back into `src`.
 
 ## 🔎 Keywords
 
