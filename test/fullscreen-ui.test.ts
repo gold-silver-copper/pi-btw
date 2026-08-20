@@ -125,6 +125,110 @@ async function flushAsyncWork(): Promise<void> {
 	await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
+function createNativeFullscreenHarness() {
+	const events: string[] = [];
+	const writes: string[] = [];
+	let handleInput: ((data: string) => void) | undefined;
+	const terminal = {
+		columns: 80,
+		rows: 12,
+		start(onInput: (data: string) => void) {
+			handleInput = onInput;
+		},
+		stop() {},
+		write(data: string) {
+			writes.push(data);
+		},
+		hideCursor() {},
+		showCursor() {},
+	} as never;
+	const parent = {
+		mode: "regular",
+		terminal,
+		getShowHardwareCursor: () => false,
+		stop(options?: { preserveScreen?: boolean }) {
+			events.push(`parent.stop:${String(options?.preserveScreen)}`);
+		},
+		start() {
+			events.push("parent.start");
+		},
+		renderNow(force?: boolean) {
+			events.push(`parent.renderNow:${String(force)}`);
+		},
+		requestRender() {},
+	} as unknown as TUI;
+	let outerComponent: FakeComponent | undefined;
+	let outerDone: ((value: unknown) => void) | undefined;
+	let editorText = "main draft";
+	const theme = {
+		fg: (_color: string, text: string) => text,
+		bg: (_color: string, text: string) => text,
+		underline: (text: string) => text,
+		inverse: (text: string) => text,
+		bold: (text: string) => text,
+	};
+	const ctx = {
+		ui: {
+			custom: async (factory: (...args: never[]) => FakeComponent) => {
+				const result = new Promise<unknown>((resolve) => {
+					outerDone = resolve;
+				});
+				outerComponent = factory(
+					parent as never,
+					theme as never,
+					{} as never,
+					((value: unknown) => outerDone?.(value)) as never,
+				);
+				return result;
+			},
+			getEditorText: () => editorText,
+			setEditorText: (value: string) => {
+				editorText = value;
+			},
+		},
+	} as never;
+	return {
+		ctx,
+		events,
+		writes,
+		get outerComponent() {
+			return outerComponent;
+		},
+		get input() {
+			assert.ok(handleInput);
+			return handleInput;
+		},
+	};
+}
+
+async function startClipboardSelection(copy: (text: string) => Promise<void>) {
+	const harness = createNativeFullscreenHarness();
+	let sideTui: TUI | undefined;
+	let closeSide: (() => void) | undefined;
+	const running = runBtwFullscreen(
+		harness.ctx,
+		(fullscreenCtx) =>
+			fullscreenCtx.ui.custom<"closed">((tui, _theme, _keys, done) => {
+				sideTui = tui;
+				closeSide = () => done("closed");
+				return {
+					render: () => ["\u001b[31mcopy me\u001b[39m"],
+					invalidate() {},
+					dispose() {},
+				};
+			}),
+		{ copyToClipboard: copy },
+	);
+	await flushAsyncWork();
+	assert.ok(sideTui);
+	assert.ok(closeSide);
+	sideTui.renderNow(true);
+	harness.writes.length = 0;
+	harness.input("\u001b[<0;1;1M");
+	harness.input("\u001b[<0;7;1m");
+	return { harness, running, sideTui, closeSide };
+}
+
 test("default fullscreen enables application-owned mouse selection and restores terminal modes", async () => {
 	const writes: string[] = [];
 	let outerDone: ((value: unknown) => void) | undefined;
@@ -190,6 +294,106 @@ test("default fullscreen enables application-owned mouse selection and restores 
 			true,
 			`missing cleanup sequence ${JSON.stringify(sequence)}`,
 		);
+	}
+});
+
+test.each([
+	{
+		name: "successful host copy",
+		copy: async (text: string) => {
+			assert.equal(text, "copy me");
+		},
+		feedback: "Copied!",
+	},
+	{
+		name: "synchronous host failure",
+		copy: (_text: string): Promise<void> => {
+			throw new Error("clipboard unavailable");
+		},
+		feedback: "Copy failed",
+	},
+	{
+		name: "rejected host copy",
+		copy: async (_text: string) => {
+			throw new Error("clipboard rejected");
+		},
+		feedback: "Copy failed",
+	},
+])("default fullscreen reports $name and restores its parent", async ({ copy, feedback }) => {
+	const { harness, running, sideTui, closeSide } = await startClipboardSelection(copy);
+	await flushAsyncWork();
+	sideTui.renderNow(true);
+	const outputBeforeClose = harness.writes.join("");
+	assert.equal(outputBeforeClose.includes("\u001b]52;"), false);
+	assert.equal(outputBeforeClose.includes(feedback), true);
+	closeSide();
+
+	assert.equal(await running, "closed");
+	assert.deepEqual(harness.events, ["parent.stop:true", "parent.start", "parent.renderNow:false"]);
+});
+
+test.each(["resolve", "reject"] as const)(
+	"a host clipboard promise may %s after close without blocking restoration or rejecting outward",
+	async (settlement) => {
+		let settleCopy: ((settlement: "resolve" | "reject") => void) | undefined;
+		const copy = () =>
+			new Promise<void>((resolve, reject) => {
+				settleCopy = (result) => {
+					if (result === "resolve") resolve();
+					else reject(new Error("late clipboard failure"));
+				};
+			});
+		const unhandled: unknown[] = [];
+		const onUnhandled = (error: unknown) => unhandled.push(error);
+		process.on("unhandledRejection", onUnhandled);
+		try {
+			const { harness, running, closeSide } = await startClipboardSelection(copy);
+			await flushAsyncWork();
+			assert.ok(settleCopy);
+			closeSide();
+			assert.equal(await running, "closed");
+			assert.deepEqual(harness.events, [
+				"parent.stop:true",
+				"parent.start",
+				"parent.renderNow:false",
+			]);
+
+			settleCopy(settlement);
+			await flushAsyncWork();
+			assert.deepEqual(unhandled, []);
+		} finally {
+			process.off("unhandledRejection", onUnhandled);
+		}
+	},
+);
+
+test("disposal restores the parent while a clipboard copy is pending and contains its late rejection", async () => {
+	let rejectCopy: ((error: Error) => void) | undefined;
+	const copy = () =>
+		new Promise<void>((_resolve, reject) => {
+			rejectCopy = reject;
+		});
+	const unhandled: unknown[] = [];
+	const onUnhandled = (error: unknown) => unhandled.push(error);
+	process.on("unhandledRejection", onUnhandled);
+	try {
+		const { harness, running } = await startClipboardSelection(copy);
+		await flushAsyncWork();
+		assert.ok(rejectCopy);
+		assert.ok(harness.outerComponent);
+		harness.outerComponent.dispose();
+		await assert.rejects(running, /dedicated pi-btw UI was disposed/i);
+		assert.deepEqual(harness.events, [
+			"parent.stop:true",
+			"parent.start",
+			"parent.renderNow:false",
+		]);
+
+		rejectCopy(new Error("clipboard rejected after disposal"));
+		await flushAsyncWork();
+		assert.deepEqual(unhandled, []);
+	} finally {
+		process.off("unhandledRejection", onUnhandled);
 	}
 });
 

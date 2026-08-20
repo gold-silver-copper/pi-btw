@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import type {
-	ExtensionCommandContext,
-	KeybindingsManager,
-	Theme,
+import {
+	copyToClipboard as copyToHostClipboard,
+	type ExtensionCommandContext,
+	type KeybindingsManager,
+	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
@@ -30,11 +31,12 @@ export interface BtwFullscreenLayoutComponent extends Component {
 	getFullscreenLayout(): Component;
 }
 
-export type BtwFullscreenTuiFactory = (parent: TUI) => BtwFullscreenTui;
+export type BtwFullscreenTuiFactory = (parent: TUI, theme: Theme) => BtwFullscreenTui;
 
 export interface BtwFullscreenDependencies {
 	createTui?: BtwFullscreenTuiFactory;
 	openUrl?: (url: string) => void;
+	copyToClipboard?: (text: string) => Promise<void>;
 }
 
 export type RunBtwFullscreen = <T>(
@@ -58,7 +60,13 @@ export async function runBtwFullscreen<T>(
 ): Promise<T> {
 	const createTui =
 		dependencies.createTui ??
-		((parent: TUI) => createBtwFullscreenTui(parent, dependencies.openUrl ?? openUrlInBrowser));
+		((parent: TUI, theme: Theme) =>
+			createBtwFullscreenTui(
+				parent,
+				theme,
+				dependencies.openUrl ?? openUrlInBrowser,
+				dependencies.copyToClipboard ?? copyToHostClipboard,
+			));
 	let liveEditorText = ctx.ui.getEditorText();
 	let restoreEditor = false;
 	const outcome = await ctx.ui.custom<FullscreenOutcome<T>>(
@@ -92,10 +100,27 @@ export async function runBtwFullscreen<T>(
 	return outcome.value;
 }
 
-function createBtwFullscreenTui(parent: TUI, openUrl: (url: string) => void): BtwFullscreenTui {
+function createBtwFullscreenTui(
+	parent: TUI,
+	theme: Theme,
+	openUrl: (url: string) => void,
+	copyToClipboard: (text: string) => Promise<void>,
+): BtwFullscreenTui {
+	const styleSearchMatch = (text: string) =>
+		theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
 	return new TuiAltScreen(parent.terminal, parent.getShowHardwareCursor(), undefined, {
 		mouse: true,
+		searchMatchStyle: (text) => theme.underline(styleSearchMatch(text)),
+		searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
 		openUrl,
+		copySelection: async (text) => {
+			try {
+				await copyToClipboard(text);
+				return true;
+			} catch {
+				return false;
+			}
+		},
 	});
 }
 
@@ -154,7 +179,7 @@ class BtwFullscreenHost<T> implements Component {
 			this.parent.stop({ preserveScreen: true });
 			parentStopped = true;
 			if (this.disposed) throw new FullscreenUiDisposedError();
-			this.fullscreen = this.createTui(this.parent);
+			this.fullscreen = this.createTui(this.parent, this.theme);
 			fullscreenCreated = true;
 			this.fullscreen.start();
 			outcome = { kind: "completed", value: await this.run(this.createContext()) };

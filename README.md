@@ -76,32 +76,29 @@ Opening and closing a thread without a new result does not reorder it.
 `/btw <question>` bypasses this menu and always starts a fresh side thread.
 Its answer opens above the side-thread editor.
 The side thread uses a dedicated full-screen terminal view.
-The main agent continues running in the background, but its screen rendering stays suspended until
-`/btw` closes, so new main-thread output cannot move a mouse selection inside the side thread.
-Drag the primary mouse button across side-thread text to select and copy it through Pi's terminal
-clipboard support. Returning from `/btw` redraws the main view with everything produced while it
-was hidden. A compact `btw · side thread` header stays fixed above the content so the ephemeral
-workspace remains recognizable while scrolling. Messages use Pi's normal
-user and assistant presentation without numbered turns or role labels. Type each question and press
-`Enter`; no follow-up shortcut is required.
-Previous side questions and answers remain available to the model and visible for that
-invocation. The side-thread header shows its current thinking level. Press Pi's configured
-`app.thinking.cycle` shortcut (`Shift+Tab` by default) in the composer to cycle the levels
-supported by the side-thread model; every later question uses the displayed level until it is
-changed again. When a fixed thinking level is selected, each shortcut change is also written to
-`pi-btw.json` for the next invocation by default. Turn **Remember thinking level changes** off in
-Settings to keep fixed-level changes local to the current side thread. When **Same as main thread** is
-selected, shortcut changes are always local to the current side thread. Neither path changes the main
-session's thinking level.
-While a response is running, the transcript and composer remain visible above an `Answering…`
-status.
-Type another question and press `Enter` to queue it as `Steering`; queued questions are shown in
-submission order and answered one at a time after the active response completes.
+The main agent continues running in the background, but its screen rendering stays suspended until `/btw` closes, so new main-thread output cannot move a mouse selection inside the side thread.
+Drag the primary mouse button across side-thread text to request a copy through Pi's host clipboard helper.
+The view reports `Copied!` when Pi accepts the copy and `Copy failed` when Pi reports failure; actual clipboard availability still depends on operating-system and terminal support.
+Returning from `/btw` redraws the main view with everything produced while it was hidden.
+A compact `btw · side thread` header stays fixed above the content so the ephemeral workspace remains recognizable while scrolling.
+Messages use Pi's normal user and assistant presentation without numbered turns or role labels.
+Type each question and press `Enter`; no follow-up shortcut is required.
+Press `Ctrl+Shift+F` to search completed or answering transcript content.
+Press `Enter` or `Ctrl+G` for the next match, `Shift+Enter` or `Ctrl+Shift+G` for the previous match, and `Escape` to close search.
+Search uses Pi's active theme, keeps the composer available after closing the search overlay, and does not include fixed header or footer chrome.
+Previous side questions and answers remain available to the model and visible for that invocation.
+The side-thread header shows its current thinking level.
+Press Pi's configured `app.thinking.cycle` shortcut (`Shift+Tab` by default) in the composer to cycle the levels supported by the side-thread model; every later question uses the displayed level until it is changed again.
+When a fixed thinking level is selected, each shortcut change is also written to `pi-btw.json` for the next invocation by default.
+Turn **Remember thinking level changes** off in Settings to keep fixed-level changes local to the current side thread.
+When **Same as main thread** is selected, shortcut changes are always local to the current side thread.
+Neither path changes the main session's thinking level.
+While a response is running, the transcript and composer remain visible above an `Answering…` status.
+Type another question and press `Enter` to queue it as `Steering`; queued questions are shown in submission order and answered one at a time after the active response completes.
 A queued question uses the side thread's thinking level when its turn begins.
 A failed active response is shown in the transcript and does not discard later steering questions.
 Use the mouse wheel or trackpad to scroll transcript history like Pi's main thread.
-Keyboard `PgUp`/`PgDn` history navigation remains available.
-It appears in the footer only when the transcript can scroll.
+Keyboard `PgUp`/`PgDn` history navigation remains available and appears in the footer only when the transcript can scroll.
 Press `Ctrl+C` to cancel the active response and discard the ephemeral side-thread draft and steering queue.
 Completed questions, answers, and visible errors remain available through Resume until the current extension instance ends.
 Steering remains entirely inside pi-btw and never appends to the main conversation or editor.
