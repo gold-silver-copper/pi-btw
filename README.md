@@ -44,7 +44,12 @@ pi -e ./packages/pi-btw
 
 The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
 
-## 🚀 Usage
+## 🚀 Quick start
+
+Run `/btw <question>` to start a side thread immediately, or run `/btw` to choose context and settings first.
+Side-thread questions and answers remain separate from the main conversation unless you explicitly bring selected context back.
+
+## 💬 Commands
 
 Open the pi-btw menu or provide the first question immediately:
 
@@ -131,7 +136,7 @@ conversation. Non-empty threads remain only in memory for Resume within the curr
 `/new`, Pi `/resume`, `/reload`, extension replacement, and process restart discard every retained
 thread. Unsent drafts, steering queues, interrupted answers, and model credentials are never retained.
 
-## ⚙️ Model and thinking level
+## ⚙️ Settings
 
 By default, `/btw` uses the current session model. To use an independent model for side
 questions, create:
