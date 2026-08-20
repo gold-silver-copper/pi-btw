@@ -103,8 +103,8 @@ Steering remains entirely inside pi-btw and never appends to the main conversati
 After at least one successful answer, press `Ctrl+R` to bring selected context to the main editor.
 The scope menu shows the size of the latest question and answer and the entire side thread before you choose.
 Bring the latest question and answer, everything from a chosen question onward, an exact text range, or the entire side thread.
-Question-suffix, exact-range, and entire-thread choices preview the exact editable context block before the side thread closes;
-`Escape` returns and `Ctrl+C` closes without bringing anything to main.
+Question-suffix, exact-range, and entire-thread choices preview the exact editable context block before the side thread closes.
+Pressing `Escape` returns, while `Ctrl+C` closes without bringing anything to main.
 
 The text-range selector supports both fast line selection and editor-style character selection.
 It reports whether anything is selected plus the selected line, message, and approximate token counts.
