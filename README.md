@@ -1,27 +1,19 @@
-# 💬 pi-btw — Side Questions for the Pi Coding Agent
+# 💬 pi-btw — Ask Side Questions Without Derailing the Main Task
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-btw)](https://www.npmjs.com/package/@narumitw/pi-btw) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-`@narumitw/pi-btw` is a native [Pi coding agent](https://pi.dev) extension that adds `/btw`, a side-question command for quick clarifications that should not interrupt or pollute the main agent conversation.
+Ask temporary questions in a separate side thread while the main Pi conversation and coding task stay focused.
 
-Use it when you want to ask a temporary question, inspect context, or get a short explanation while keeping the primary coding task focused.
+Bring back only the answer or context you explicitly choose.
 
 ## ✨ Features
 
-- Adds a `/btw` menu for starting or resuming an in-memory side thread, choosing context from the main session tree, or changing pi-btw settings.
-- Starts a fresh side thread from any persisted main-session branch without switching the main branch.
-- Keeps `/btw <question>` as a direct fast path that always starts a fresh side thread.
-- Answers side questions in a dedicated, scrollable full-screen UI.
-- Keeps mouse-drag copying stable while the main agent continues running in the background.
-- Supports follow-up questions in the same ephemeral side thread.
-- Resumes any non-empty side thread retained by the current Pi session, listed by its first question.
-- Queues Pi-style `Steering` questions while an answer is running and processes them one at a time.
-- Optionally brings the latest answer, a question-to-end suffix, an exact line range, or the entire side thread into the main editor.
-- Uses the current session branch as context.
-- Uses Pi's current model or an independent model selected in `pi-btw.json`.
-- Uses a pi-btw thinking level that can either start from the main thread or use a fixed remembered value.
-- Does not append the side question or answer to the main conversation.
-- Works as an independently installable npm Pi extension package.
+- Starts a fresh side thread immediately with `/btw <question>` or opens the manager with `/btw`.
+- Uses any persisted main-session branch as context without switching that branch.
+- Supports scrollable answers, follow-up questions, queued steering, and resumable in-memory threads.
+- Keeps side questions and answers out of the main conversation by default.
+- Brings back only the latest answer, a selected range, a question suffix, or the complete side thread when requested.
+- Uses Pi's current model and thinking level or independent saved choices.
 
 ## 📦 Install
 
@@ -108,45 +100,43 @@ Press `Ctrl+C` to cancel the active response and discard the ephemeral side-thre
 Completed questions, answers, and visible errors remain available through Resume until the current extension instance ends.
 Steering remains entirely inside pi-btw and never appends to the main conversation or editor.
 
-After at least one successful answer, press `Ctrl+R` to bring selected context to the main
-editor. The scope menu shows the size of the latest question and answer and the entire side
-thread before you choose. Bring the latest question and answer, everything from a chosen
-question onward, an exact text range, or the entire side thread. Question-suffix, exact-range,
-and entire-thread choices preview the exact editable context block before the side thread closes;
+After at least one successful answer, press `Ctrl+R` to bring selected context to the main editor.
+The scope menu shows the size of the latest question and answer and the entire side thread before you choose.
+Bring the latest question and answer, everything from a chosen question onward, an exact text range, or the entire side thread.
+Question-suffix, exact-range, and entire-thread choices preview the exact editable context block before the side thread closes;
 `Escape` returns and `Ctrl+C` closes without bringing anything to main.
 
 The text-range selector supports both fast line selection and editor-style character selection.
-It reports whether anything is selected plus the selected line, message, and approximate token
-counts. Press `Space` to select the current raw source line, then use `Up`/`Down` to extend by
-whole lines; press `Space` again to clear it. Alternatively, use the arrow keys to move the cursor
-and `Shift`+arrow keys to extend a character-level selection. Starting a Shift selection replaces
-any active line selection. Selected lines include a visible `●` marker in addition to highlighting.
-Pi's configured keys control vertical navigation, bringing, and going back (`Up`/`Down`, `Enter`,
-and `Escape` by default), and the selector displays the active keys. Selection follows raw source
-text rather than terminal-wrapped visual rows.
+It reports whether anything is selected plus the selected line, message, and approximate token counts.
+Press `Space` to select the current raw source line, then use `Up`/`Down` to extend by whole lines; press `Space` again to clear it.
+Alternatively, use the arrow keys to move the cursor and `Shift`+arrow keys to extend a character-level selection.
+Starting a Shift selection replaces any active line selection.
+Selected lines include a visible `●` marker in addition to highlighting.
+Pi's configured keys control vertical navigation, bringing, and going back (`Up`/`Down`, `Enter`, and `Escape` by default), and the selector displays the active keys.
+Selection follows raw source text rather than terminal-wrapped visual rows.
 
-Bringing context to main closes the side thread and loads a deterministic, editable context block
-into Pi's main editor. It never sends the draft automatically. If the main editor already has a
-draft, append is the recommended default. Replace is labeled as destructive and requires a second
-confirmation; Cancel returns to the side thread without changing either draft. Concurrent editor
-updates made while these menus are open are preserved. A success message reports whether context
-was loaded, appended, or replaced and its approximate size.
-Without an explicit bring-to-main action, closing `/btw` never adds the side thread to the main
-conversation. Non-empty threads remain only in memory for Resume within the current Pi session.
-`/new`, Pi `/resume`, `/reload`, extension replacement, and process restart discard every retained
-thread. Unsent drafts, steering queues, interrupted answers, and model credentials are never retained.
+Bringing context to main closes the side thread and loads a deterministic, editable context block into Pi's main editor.
+It never sends the draft automatically.
+If the main editor already has a draft, append is the recommended default.
+Replace is labeled as destructive and requires a second confirmation; Cancel returns to the side thread without changing either draft.
+Concurrent editor updates made while these menus are open are preserved.
+A success message reports whether context was loaded, appended, or replaced and its approximate size.
+Without an explicit bring-to-main action, closing `/btw` never adds the side thread to the main conversation.
+Non-empty threads remain only in memory for Resume within the current Pi session.
+`/new`, Pi `/resume`, `/reload`, extension replacement, and process restart discard every retained thread.
+Unsent drafts, steering queues, interrupted answers, and model credentials are never retained.
 
 ## ⚙️ Settings
 
-By default, `/btw` uses the current session model. To use an independent model for side
-questions, create:
+By default, `/btw` uses the current session model.
+To use an independent model for side questions, create:
 
 ```text
 $PI_CODING_AGENT_DIR/pi-btw.json
 ```
 
-The normal location is `~/.pi/agent/pi-btw.json`. `PI_CODING_AGENT_DIR` is an existing Pi
-setting; pi-btw does not add any environment variables.
+The normal location is `~/.pi/agent/pi-btw.json`.
+`PI_CODING_AGENT_DIR` is an existing Pi setting; pi-btw does not add any environment variables.
 
 ```json
 {
@@ -156,42 +146,41 @@ setting; pi-btw does not add any environment variables.
 }
 ```
 
-The `model` value uses `provider/model-id` format. Only the first `/` is the separator, so
-model IDs may contain additional slashes, such as `openrouter/anthropic/claude-sonnet`.
-The configured model must exist in Pi's model registry and have usable credentials. If it
-cannot be found or authenticated, pi-btw warns and falls back to the current session model.
-If neither model is available, `/btw` reports an error and stops. This selection affects only
-`/btw`; it does not change the main session model.
+The `model` value uses `provider/model-id` format.
+Only the first `/` is the separator, so model IDs may contain additional slashes, such as `openrouter/anthropic/claude-sonnet`.
+The configured model must exist in Pi's model registry and have usable credentials.
+If it cannot be found or authenticated, pi-btw warns and falls back to the current session model.
+If neither model is available, `/btw` reports an error and stops.
+This selection affects only `/btw`; it does not change the main session model.
 
-Pi calls its reasoning setting the **thinking level**. In Settings, choose **Same as main thread**
-to start each new side thread from the main thread's current thinking level. This is stored by
-omitting `thinkingLevel` from `pi-btw.json`.
+Pi calls its reasoning setting the **thinking level**.
+In Settings, choose **Same as main thread** to start each new side thread from the main thread's current thinking level.
+This is stored by omitting `thinkingLevel` from `pi-btw.json`.
 
-Set `thinkingLevel` only when you want a fixed pi-btw starting level. Accepted fixed values are
-`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. The initial value and shortcut cycle
-are clamped to the selected side model's capabilities using Pi's model rules. Resumed side threads
-keep their own local thinking level instead of re-syncing with the main thread. Pi-btw does not read,
-write, or change the main session's `defaultThinkingLevel`.
+Set `thinkingLevel` only when you want a fixed pi-btw starting level.
+Accepted fixed values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
+The initial value and shortcut cycle are clamped to the selected side model's capabilities using Pi's model rules.
+Resumed side threads keep their own local thinking level instead of re-syncing with the main thread.
+Pi-btw does not read, write, or change the main session's `defaultThinkingLevel`.
 
-`rememberThinkingLevelChanges` controls only persistence for fixed thinking levels and defaults to
-`true` when omitted. A side-thread shortcut always changes that side thread immediately. When a fixed
-thinking level is selected and remembering is on, the concrete level is written for the next
-invocation; when off, `pi-btw.json` stays unchanged. When **Same as main thread** is selected,
-shortcut changes stay local even when remembering is on. If a shortcut write fails, the local change
-remains active and pi-btw warns that it was not remembered. A failed Settings-screen save instead
-restores the previous displayed value.
+`rememberThinkingLevelChanges` controls only persistence for fixed thinking levels and defaults to `true` when omitted.
+A side-thread shortcut always changes that side thread immediately.
+When a fixed thinking level is selected and remembering is on, the concrete level is written for the next invocation; when off, `pi-btw.json` stays unchanged.
+When **Same as main thread** is selected, shortcut changes stay local even when remembering is on.
+If a shortcut write fails, the local change remains active and pi-btw warns that it was not remembered.
+A failed Settings-screen save instead restores the previous displayed value.
 
-A missing settings file is a side-effect-free read: pi-btw creates it only after a Settings change
-or a remembered shortcut change. Saves are ordered within the Pi process and published atomically
-with a same-directory temporary file and rename. They preserve `model` and unknown fields; malformed
-or invalid files block saves and remain unchanged. Settings must be valid UTF-8 and no larger than
-64 KiB, so unexpectedly large or invalidly encoded files are rejected without being rewritten.
-Separate Pi processes and external editors are outside this in-process ordering boundary. The file
-is read for each `/btw` invocation, so edits apply without `/reload`.
+A missing settings file is a side-effect-free read: pi-btw creates it only after a Settings change or a remembered shortcut change.
+Saves are ordered within the Pi process and published atomically with a same-directory temporary file and rename.
+They preserve `model` and unknown fields; malformed or invalid files block saves and remain unchanged.
+Settings must be valid UTF-8 and no larger than 64 KiB, so unexpectedly large or invalidly encoded files are rejected without being rewritten.
+Separate Pi processes and external editors are outside this in-process ordering boundary.
+The file is read for each `/btw` invocation, so edits apply without `/reload`.
 
 ## 🧠 Why use pi-btw?
 
-Normal assistant messages become part of the main Pi conversation and can distract the coding agent from the task. `pi-btw` creates a lightweight side channel for context-aware questions, making it useful for pair programming, debugging, code review, and repository exploration.
+Normal assistant messages become part of the main Pi conversation and can distract the coding agent from the task.
+`pi-btw` creates a lightweight side channel for context-aware questions, making it useful for pair programming, debugging, code review, and repository exploration.
 
 ## 🗂️ Package layout
 
@@ -234,4 +223,5 @@ Pi extension, Pi coding agent, AI coding agent, side question command, agent cha
 
 ## 📄 License
 
-MIT. See [`LICENSE`](./LICENSE).
+MIT.
+See [`LICENSE`](./LICENSE).
