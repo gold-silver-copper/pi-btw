@@ -1,5 +1,12 @@
 # @narumitw/pi-btw
 
+## 0.55.2
+
+### Patch Changes
+
+- Updated dependencies [b9eba3a]
+  - @narumitw/pi-tui-kit@0.58.0
+
 ## 0.55.1
 
 ### Patch Changes
