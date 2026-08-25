@@ -151,6 +151,7 @@ class BtwFullscreenHost<T> implements Component {
 	private fullscreen: BtwFullscreenTui | undefined;
 	private parentOverlay: OverlayHandle | undefined;
 	private cancelActiveCustom: (() => void) | undefined;
+	private hardCancelActiveCustom: (() => void) | undefined;
 	private removeHardCancelListener: (() => void) | undefined;
 	private started = false;
 	private disposed = false;
@@ -203,19 +204,13 @@ class BtwFullscreenHost<T> implements Component {
 			this.fullscreen.start();
 			// Waiting for the custom promise would leave follow-up keys bound to the side TUI.
 			this.removeHardCancelListener = this.fullscreen.addInputListener((data) => {
-				if (!isKeyRelease(data) && matchesKey(data, Key.ctrl("c"))) {
-					const cancelActiveCustom = this.cancelActiveCustom;
-					// Let the focused component finish normally before applying the hard-cancel fallback.
-					queueMicrotask(() => {
-						try {
-							cancelActiveCustom?.();
-						} catch (error) {
-							this.cleanupError ??= error;
-						}
-					});
+				if (isKeyRelease(data) || !matchesKey(data, Key.ctrl("c"))) return undefined;
+				try {
+					this.hardCancelActiveCustom?.();
+				} finally {
 					this.restoreParent();
 				}
-				return undefined;
+				return { consume: true };
 			});
 			outcome = { kind: "completed", value: await this.run(this.createContext()) };
 		} catch (error) {
@@ -344,6 +339,7 @@ class BtwFullscreenHost<T> implements Component {
 				if (promiseSettled || !hasPendingValue) return;
 				promiseSettled = true;
 				this.cancelActiveCustom = undefined;
+				this.hardCancelActiveCustom = undefined;
 				if (!factorySettled) {
 					resolve(pendingValue as Value);
 					return;
@@ -367,6 +363,7 @@ class BtwFullscreenHost<T> implements Component {
 				closed = true;
 				promiseSettled = true;
 				this.cancelActiveCustom = undefined;
+				this.hardCancelActiveCustom = undefined;
 				try {
 					unmount();
 					reject(error);
@@ -378,6 +375,16 @@ class BtwFullscreenHost<T> implements Component {
 				if (promiseSettled) return;
 				disposeComponent();
 				if (!promiseSettled) fail(new FullscreenUiDisposedError());
+			};
+			this.hardCancelActiveCustom = () => {
+				if (promiseSettled) return;
+				try {
+					component?.handleInput?.("\u0003");
+				} catch (error) {
+					fail(error);
+					return;
+				}
+				this.cancelActiveCustom?.();
 			};
 
 			let created: ReturnType<BtwCustomFactory<Value>>;
