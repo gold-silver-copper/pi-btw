@@ -377,6 +377,50 @@ test("Ctrl+C hands input back without closing another parent overlay", async () 
 	}
 });
 
+test("Ctrl+C cancels the side flow when transcript search owns focus", async () => {
+	const harness = createInputHandoffHarness();
+	const ctrlShiftF = "\u001b[102;6u";
+	let sideTui: TUI | undefined;
+	let closeSide: (() => void) | undefined;
+	let settled = false;
+	const running = runBtwFullscreen(harness.ctx, (ctx) =>
+		ctx.ui.custom<"closed">((tui, _theme, _keybindings, done) => {
+			sideTui = tui;
+			closeSide = () => done("closed");
+			return {
+				focused: false,
+				render: () => ["side thread"],
+				invalidate() {},
+			};
+		}),
+	);
+	const observed = running.then(
+		() => {
+			settled = true;
+		},
+		() => {
+			settled = true;
+		},
+	);
+	try {
+		await flushAsyncWork();
+		assert.ok(sideTui);
+
+		harness.terminal.send(ctrlShiftF);
+		assert.equal(sideTui.hasOverlay(), true);
+		harness.terminal.send("\u0003");
+		harness.terminal.send("x");
+		await flushAsyncWork();
+
+		assert.equal(settled, true);
+		assert.equal(harness.mainInput.text, "x");
+	} finally {
+		closeSide?.();
+		await observed;
+		harness.parent.stop();
+	}
+});
+
 test("default fullscreen enables application-owned mouse selection and restores terminal modes", async () => {
 	const writes: string[] = [];
 	let outerDone: ((value: unknown) => void) | undefined;

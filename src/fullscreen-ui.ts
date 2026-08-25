@@ -203,7 +203,18 @@ class BtwFullscreenHost<T> implements Component {
 			this.fullscreen.start();
 			// Waiting for the custom promise would leave follow-up keys bound to the side TUI.
 			this.removeHardCancelListener = this.fullscreen.addInputListener((data) => {
-				if (!isKeyRelease(data) && matchesKey(data, Key.ctrl("c"))) this.restoreParent();
+				if (!isKeyRelease(data) && matchesKey(data, Key.ctrl("c"))) {
+					const cancelActiveCustom = this.cancelActiveCustom;
+					// Let the focused component finish normally before applying the hard-cancel fallback.
+					queueMicrotask(() => {
+						try {
+							cancelActiveCustom?.();
+						} catch (error) {
+							this.cleanupError ??= error;
+						}
+					});
+					this.restoreParent();
+				}
 				return undefined;
 			});
 			outcome = { kind: "completed", value: await this.run(this.createContext()) };
