@@ -13,6 +13,8 @@ import {
 	type OverlayHandle,
 	type TUI,
 	TuiAltScreen,
+	type TuiInputListener,
+	type TuiInputListenerResult,
 	truncateToWidth,
 } from "@earendil-works/pi-tui";
 import { sanitizeSingleLine } from "./text.js";
@@ -28,6 +30,7 @@ type BtwCustomFactory<T> = (
 type BtwFullscreenTui = TUI & {
 	flash?: (message: string, durationMs?: number) => void;
 	setLayoutRoot(component: Component | undefined): void;
+	addInputListenerBeforeViewport?(listener: TuiInputListener): () => void;
 };
 
 export interface BtwFullscreenLayoutComponent extends Component {
@@ -110,6 +113,59 @@ export async function runBtwFullscreen<T>(
 	return outcome.value;
 }
 
+type BtwInputListeners = {
+	beforeViewport: Set<TuiInputListener>;
+	regular: Set<TuiInputListener>;
+};
+
+const btwInputListeners = new WeakMap<BtwTuiAltScreen, BtwInputListeners>();
+
+function dispatchBtwInput(listeners: BtwInputListeners, data: string): TuiInputListenerResult {
+	let current = data;
+	for (const group of [listeners.beforeViewport, listeners.regular]) {
+		for (const listener of group) {
+			const result = listener(current);
+			if (result?.consume) return result;
+			if (result?.data !== undefined) current = result.data;
+		}
+	}
+	return current === data ? undefined : { data: current };
+}
+
+class BtwTuiAltScreen extends TuiAltScreen {
+	override addInputListener(listener: TuiInputListener): () => void {
+		let listeners = btwInputListeners.get(this);
+		if (!listeners) {
+			const registeredListeners: BtwInputListeners = {
+				beforeViewport: new Set(),
+				regular: new Set(),
+			};
+			btwInputListeners.set(this, registeredListeners);
+			super.addInputListener((data) => dispatchBtwInput(registeredListeners, data));
+			listeners = registeredListeners;
+		}
+		listeners.regular.add(listener);
+		return () => listeners.regular.delete(listener);
+	}
+
+	addInputListenerBeforeViewport(listener: TuiInputListener): () => void {
+		const listeners = btwInputListeners.get(this);
+		if (!listeners) return super.addInputListener(listener);
+		listeners.beforeViewport.add(listener);
+		return () => listeners.beforeViewport.delete(listener);
+	}
+
+	override removeInputListener(listener: TuiInputListener): void {
+		const listeners = btwInputListeners.get(this);
+		if (!listeners) {
+			super.removeInputListener(listener);
+			return;
+		}
+		listeners.beforeViewport.delete(listener);
+		listeners.regular.delete(listener);
+	}
+}
+
 function createBtwFullscreenTui(
 	parent: TUI,
 	theme: Theme,
@@ -118,7 +174,7 @@ function createBtwFullscreenTui(
 ): BtwFullscreenTui {
 	const styleSearchMatch = (text: string) =>
 		theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
-	return new TuiAltScreen(parent.terminal, parent.getShowHardwareCursor(), undefined, {
+	return new BtwTuiAltScreen(parent.terminal, parent.getShowHardwareCursor(), undefined, {
 		mouse: true,
 		searchMatchStyle: (text) => theme.underline(styleSearchMatch(text)),
 		searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
@@ -203,7 +259,10 @@ class BtwFullscreenHost<T> implements Component {
 			this.fullscreenCreated = true;
 			this.fullscreen.start();
 			// Waiting for the custom promise would leave follow-up keys bound to the side TUI.
-			this.removeHardCancelListener = this.fullscreen.addInputListener((data) => {
+			const addHardCancelListener =
+				this.fullscreen.addInputListenerBeforeViewport?.bind(this.fullscreen) ??
+				this.fullscreen.addInputListener.bind(this.fullscreen);
+			this.removeHardCancelListener = addHardCancelListener((data) => {
 				if (isKeyRelease(data) || !matchesKey(data, Key.ctrl("c"))) return undefined;
 				try {
 					this.hardCancelActiveCustom?.();

@@ -3,8 +3,12 @@ import {
 	type Component,
 	Container,
 	type Focusable,
+	getKeybindings,
+	KeybindingsManager,
+	setKeybindings,
 	type Terminal,
 	type TUI,
+	TUI_KEYBINDINGS,
 	TuiMainScreen,
 } from "@earendil-works/pi-tui";
 import { test } from "vitest";
@@ -421,7 +425,14 @@ test("Ctrl+C cancels the side flow when transcript search owns focus", async () 
 	}
 });
 
-test("Ctrl+C hard-cancels the side root while transcript search owns fullscreen focus", async () => {
+test("Ctrl+C hard-cancels the side root before a remapped search close", async (t) => {
+	const previousKeybindings = getKeybindings();
+	t.onTestFinished(() => setKeybindings(previousKeybindings));
+	setKeybindings(
+		new KeybindingsManager(TUI_KEYBINDINGS, {
+			"tui.altScreen.searchClose": "ctrl+c",
+		}),
+	);
 	const harness = createInputHandoffHarness();
 	let sideTui: TUI | undefined;
 	let closeSide: (() => void) | undefined;
