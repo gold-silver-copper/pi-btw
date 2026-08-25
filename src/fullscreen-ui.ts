@@ -7,6 +7,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
+	isKeyRelease,
+	Key,
+	matchesKey,
 	type OverlayHandle,
 	type TUI,
 	TuiAltScreen,
@@ -69,9 +72,10 @@ export async function runBtwFullscreen<T>(
 			));
 	let liveEditorText = ctx.ui.getEditorText();
 	let restoreEditor = false;
+	let host: BtwFullscreenHost<T> | undefined;
 	const outcome = await ctx.ui.custom<FullscreenOutcome<T>>(
-		(parent, theme, keybindings, done) =>
-			new BtwFullscreenHost(
+		(parent, theme, keybindings, done) => {
+			host = new BtwFullscreenHost(
 				parent,
 				theme,
 				keybindings,
@@ -87,7 +91,13 @@ export async function runBtwFullscreen<T>(
 					done(value);
 				},
 				createTui,
-			),
+			);
+			return host;
+		},
+		{
+			overlay: true,
+			onHandle: (handle) => host?.setParentOverlay(handle),
+		},
 	);
 	if (restoreEditor) {
 		try {
@@ -139,10 +149,17 @@ function openUrlInBrowser(target: string): void {
 
 class BtwFullscreenHost<T> implements Component {
 	private fullscreen: BtwFullscreenTui | undefined;
+	private parentOverlay: OverlayHandle | undefined;
 	private cancelActiveCustom: (() => void) | undefined;
+	private removeHardCancelListener: (() => void) | undefined;
 	private started = false;
 	private disposed = false;
 	private finished = false;
+	private parentStopped = false;
+	private parentRestarted = false;
+	private fullscreenCreated = false;
+	private fullscreenStopped = false;
+	private cleanupError: unknown;
 
 	constructor(
 		private readonly parent: TUI,
@@ -154,6 +171,10 @@ class BtwFullscreenHost<T> implements Component {
 		private readonly createTui: BtwFullscreenTuiFactory,
 	) {
 		queueMicrotask(() => void this.start());
+	}
+
+	setParentOverlay(overlay: OverlayHandle): void {
+		this.parentOverlay = overlay;
 	}
 
 	render(width: number): string[] {
@@ -172,45 +193,61 @@ class BtwFullscreenHost<T> implements Component {
 		if (this.started || this.finished) return;
 		this.started = true;
 		let outcome: FullscreenOutcome<T>;
-		let parentStopped = false;
-		let fullscreenCreated = false;
 		try {
 			if (this.disposed) throw new FullscreenUiDisposedError();
 			this.parent.stop({ preserveScreen: true });
-			parentStopped = true;
+			this.parentStopped = true;
 			if (this.disposed) throw new FullscreenUiDisposedError();
 			this.fullscreen = this.createTui(this.parent, this.theme);
-			fullscreenCreated = true;
+			this.fullscreenCreated = true;
 			this.fullscreen.start();
+			// Waiting for the custom promise would leave follow-up keys bound to the side TUI.
+			this.removeHardCancelListener = this.fullscreen.addInputListener((data) => {
+				if (!isKeyRelease(data) && matchesKey(data, Key.ctrl("c"))) this.restoreParent();
+				return undefined;
+			});
 			outcome = { kind: "completed", value: await this.run(this.createContext()) };
 		} catch (error) {
 			outcome = { kind: "failed", error };
 		}
 
-		let cleanupError: unknown;
 		try {
 			this.cancelActiveCustom?.();
 		} catch (error) {
-			cleanupError = error;
+			this.cleanupError ??= error;
 		}
-		if (fullscreenCreated) {
+		this.restoreParent();
+		if (this.cleanupError !== undefined) outcome = { kind: "failed", error: this.cleanupError };
+		this.finished = true;
+		this.done(outcome);
+	}
+
+	private restoreParent(): void {
+		this.removeHardCancelListener?.();
+		this.removeHardCancelListener = undefined;
+		if (this.fullscreenCreated && !this.fullscreenStopped) {
+			this.fullscreenStopped = true;
 			try {
 				this.fullscreen?.stop({ preserveScreen: true });
 			} catch (error) {
-				cleanupError ??= error;
+				this.cleanupError ??= error;
 			}
 		}
-		if (parentStopped) {
-			try {
-				this.parent.start();
-				this.parent.renderNow(false);
-			} catch (error) {
-				cleanupError ??= error;
-			}
+		if (!this.parentStopped || this.parentRestarted) return;
+		const parentOverlay = this.parentOverlay;
+		this.parentOverlay = undefined;
+		try {
+			parentOverlay?.setHidden(true);
+		} catch (error) {
+			this.cleanupError ??= error;
 		}
-		if (cleanupError !== undefined) outcome = { kind: "failed", error: cleanupError };
-		this.finished = true;
-		this.done(outcome);
+		try {
+			this.parent.start();
+			this.parentRestarted = true;
+			this.parent.renderNow(false);
+		} catch (error) {
+			this.cleanupError ??= error;
+		}
 	}
 
 	private createContext(): ExtensionCommandContext {
