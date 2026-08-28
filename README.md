@@ -2,18 +2,17 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-btw)](https://www.npmjs.com/package/@narumitw/pi-btw) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Ask temporary questions in a separate side thread while the main Pi conversation and coding task stay focused.
-
-Bring back only the answer or context you explicitly choose.
+Ask questions in a temporary side thread without adding them to the main Pi conversation.
+Only context you explicitly bring back is loaded into the main editor.
 
 ## ✨ Features
 
-- Starts a fresh side thread immediately with `/btw <question>` or opens the manager with `/btw`.
-- Uses any persisted main-session branch as context without switching that branch.
-- Supports scrollable answers, follow-up questions, queued steering, and resumable in-memory threads.
+- Starts a side thread immediately with `/btw <question>` or opens the manager with `/btw`.
+- Uses any persisted main-session branch as context without switching branches.
+- Supports scrollable answers, transcript search, follow-up questions, queued steering, and in-memory resume.
 - Keeps side questions and answers out of the main conversation by default.
-- Brings back only the latest answer, a selected range, a question suffix, or the complete side thread when requested.
-- Uses Pi's current model and thinking level or independent saved choices.
+- Brings back the latest answer, a question suffix, an exact range, or the complete thread only when requested.
+- Uses Pi's current model and thinking level or saved pi-btw choices.
 
 ## 📦 Install
 
@@ -35,15 +34,17 @@ pi -e ./packages/pi-btw
 ```
 
 The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
+Pi extensions run with the Pi process's user permissions, so install only trusted packages.
 
 ## 🚀 Quick start
 
-Run `/btw <question>` to start a side thread immediately, or run `/btw` to choose context and settings first.
-Side-thread questions and answers remain separate from the main conversation unless you explicitly bring selected context back.
+In TUI mode, run `/btw <question>` to start immediately or `/btw` to choose context and settings first.
+The side thread stays separate until you explicitly bring context to the main editor.
 
 ## 💬 Commands
 
-Open the pi-btw menu or provide the first question immediately:
+`/btw` is TUI-only.
+Open the manager or provide the first question immediately:
 
 ```text
 /btw
@@ -59,72 +60,91 @@ Examples:
 /btw is this API name idiomatic?
 ```
 
-Running `/btw` alone opens a menu with **Start side thread** selected first.
-**Start from main thread tree…** opens Pi's native session tree and uses the root-to-selected-entry path, including the selected entry, as the new side thread's context.
-Selecting context does not navigate, fork, append to, or switch the main conversation, and it preserves the main editor draft.
-The selector is a snapshot of entries persisted when it opens, while the resulting side thread keeps an immutable context snapshot even if the main conversation later changes.
-Press `Escape` to return to the `/btw` menu or `Ctrl+C` to close the flow.
-The native tree controls remain available: copying reports success or failure, and an explicit `Shift+L` label edit persists through Pi as the only main-session mutation available from this selector.
-When the current Pi session has non-empty side threads in memory, **Resume side thread** opens a bounded searchable choice list.
-Search matches the displayed first question and question count while returning the thread's raw in-memory ID.
-**Settings** changes the starting thinking level and whether shortcut changes for fixed levels are remembered.
-Each Resume row keeps the first question as its fixed title, shows its question count, and the list is ordered by the newest recorded answer or visible error.
-Opening and closing a thread without a new result does not reorder it.
-`/btw <question>` bypasses this menu and always starts a fresh side thread.
-Its answer opens above the side-thread editor.
-The side thread uses a dedicated full-screen terminal view.
-The main agent continues running in the background, but its screen rendering stays suspended until `/btw` closes, so new main-thread output cannot move a mouse selection inside the side thread.
-Drag the primary mouse button across side-thread text to request a copy through Pi's host clipboard helper.
-The view reports `Copied!` when Pi accepts the copy and `Copy failed` when Pi reports failure; actual clipboard availability still depends on operating-system and terminal support.
-Returning from `/btw` redraws the main view with everything produced while it was hidden.
-A compact `btw · side thread` header stays fixed above the content so the ephemeral workspace remains recognizable while scrolling.
-Messages use Pi's normal user and assistant presentation without numbered turns or role labels.
-Type each question and press `Enter`; no follow-up shortcut is required.
-Press `Ctrl+Shift+F` to search completed or answering transcript content.
-Press `Enter` or `Ctrl+G` for the next match, `Shift+Enter` or `Ctrl+Shift+G` for the previous match, and `Escape` to close search.
-Search uses Pi's active theme, keeps the composer available after closing the search overlay, and does not include fixed header or footer chrome.
-Previous side questions and answers remain available to the model and visible for that invocation.
-The side-thread header shows its current thinking level.
-Press Pi's configured `app.thinking.cycle` shortcut (`Shift+Tab` by default) in the composer to cycle the levels supported by the side-thread model; every later question uses the displayed level until it is changed again.
-When a fixed thinking level is selected, each shortcut change is also written to `pi-btw.json` for the next invocation by default.
-Turn **Remember thinking level changes** off in Settings to keep fixed-level changes local to the current side thread.
-When **Same as main thread** is selected, shortcut changes are always local to the current side thread.
-Neither path changes the main session's thinking level.
-While a response is running, the transcript and composer remain visible above an `Answering…` status.
-Type another question and press `Enter` to queue it as `Steering`; queued questions are shown in submission order and answered one at a time after the active response completes.
-A queued question uses the side thread's thinking level when its turn begins.
-A failed active response is shown in the transcript and does not discard later steering questions.
-Use the mouse wheel or trackpad to scroll transcript history like Pi's main thread.
-Keyboard `PgUp`/`PgDn` history navigation remains available and appears in the footer only when the transcript can scroll.
-Press `Ctrl+C` to cancel the active response and discard the ephemeral side-thread draft and steering queue.
-Completed questions, answers, and visible errors remain available through Resume until the current extension instance ends.
-Steering remains entirely inside pi-btw and never appends to the main conversation or editor.
+### Choose context or resume a thread
 
-After at least one successful answer, press `Ctrl+R` to bring selected context to the main editor.
-The scope menu shows the size of the latest question and answer and the entire side thread before you choose.
-Bring the latest question and answer, everything from a chosen question onward, an exact text range, or the entire side thread.
-Question-suffix, exact-range, and entire-thread choices preview the exact editable context block before the side thread closes.
-Pressing `Escape` returns, while `Ctrl+C` closes without bringing anything to main.
+Running `/btw` opens a manager with **Start side thread** selected first.
+**Start from main thread tree…** opens Pi's session tree and uses the root-to-selected-entry path, including the selected entry, as context.
+This choice preserves the main editor draft and does not navigate, fork, append to, or switch the main conversation.
+The tree is a snapshot of persisted entries, and the side thread keeps immutable context even if the main conversation later changes.
+Escape returns to the manager, and Ctrl+C closes the flow.
+Native tree copying reports success or failure.
+An explicit `Shift+L` label edit is the only main-session mutation available from this selector and persists through Pi.
 
-The text-range selector supports both fast line selection and editor-style character selection.
-It reports whether anything is selected plus the selected line, message, and approximate token counts.
-Press `Space` to select the current raw source line, then use `Up`/`Down` to extend by whole lines; press `Space` again to clear it.
-Alternatively, use the arrow keys to move the cursor and `Shift`+arrow keys to extend a character-level selection.
-Starting a Shift selection replaces any active line selection.
-Selected lines include a visible `●` marker in addition to highlighting.
-Pi's configured keys control vertical navigation, bringing, and going back (`Up`/`Down`, `Enter`, and `Escape` by default), and the selector displays the active keys.
-Selection follows raw source text rather than terminal-wrapped visual rows.
+When non-empty threads exist in memory, **Resume side thread** opens a bounded searchable list.
+Search matches the first question and question count while retaining each raw thread ID.
+Each row uses the first question as its fixed title and shows the question count.
+Rows are ordered by the newest recorded answer or visible error; opening and closing without a new result does not reorder them.
+**Settings** controls the starting thinking level and whether fixed-level shortcut changes are remembered.
+`/btw <question>` bypasses the manager and always starts a new thread.
 
-Bringing context to main closes the side thread and loads a deterministic, editable context block into Pi's main editor.
-It never sends the draft automatically.
-If the main editor already has a draft, append is the recommended default.
-Replace is labeled as destructive and requires a second confirmation; Cancel returns to the side thread without changing either draft.
-Concurrent editor updates made while these menus are open are preserved.
-A success message reports whether context was loaded, appended, or replaced and its approximate size.
-Without an explicit bring-to-main action, closing `/btw` never adds the side thread to the main conversation.
-Non-empty threads remain only in memory for Resume within the current Pi session.
-`/new`, Pi `/resume`, `/reload`, extension replacement, and process restart discard every retained thread.
-Unsent drafts, steering queues, interrupted answers, and model credentials are never retained.
+### Use the side-thread workspace
+
+The side thread uses a dedicated full-screen terminal view with answers above the editor.
+The main agent can continue running, but main-screen rendering stays suspended until `/btw` closes so new output cannot move a mouse selection.
+Returning to Pi redraws everything produced while the main view was hidden.
+
+A fixed `btw · side thread` header identifies the workspace while scrolling.
+Messages use Pi's normal user and assistant presentation without turn numbers or role labels.
+Type a question and press Enter for each turn.
+Previous successful questions and answers remain visible and available to the side model.
+
+Drag the primary mouse button across transcript text to request a copy through Pi's host clipboard helper.
+The view reports `Copied!` when Pi accepts the request and `Copy failed` when Pi rejects it.
+Actual clipboard access still depends on the operating system and terminal.
+
+Press `Ctrl+Shift+F` to search completed or in-progress transcript content.
+Press Enter or `Ctrl+G` for the next match, `Shift+Enter` or `Ctrl+Shift+G` for the previous match, and Escape to close search.
+Search uses Pi's active theme, excludes fixed header and footer text, and returns focus to the composer when closed.
+
+### Change thinking level or queue steering
+
+The header shows the side thread's current thinking level.
+In the composer, use Pi's configured `app.thinking.cycle` shortcut (`Shift+Tab` by default) to cycle levels supported by the side model.
+Later questions use the displayed level until it changes again.
+For a fixed starting level, shortcut changes are saved to `pi-btw.json` by default.
+Turn **Remember thinking level changes** off to keep them local to the thread.
+With **Same as main thread**, shortcut changes are always local.
+Neither setting changes the main session's thinking level.
+
+During a response, the transcript and composer remain visible above `Answering…`.
+Submit another question to queue it as `Steering`.
+Queued questions appear in submission order and run one at a time after the active response.
+Each queued question uses the side thread's thinking level when its turn starts.
+A failed response remains visible and does not discard later queued questions.
+Steering never appends to the main conversation or editor.
+
+Use the mouse wheel, trackpad, or `PgUp`/`PgDn` to scroll transcript history.
+The footer shows history keys only when scrolling is available.
+Ctrl+C cancels the active response and discards the current draft and steering queue.
+Completed questions, answers, and visible errors remain available through Resume until the extension instance ends.
+
+### Bring context to the main editor
+
+After a successful answer, press `Ctrl+R` to choose context for the main editor.
+The scope menu shows the size of the latest question and answer and the full thread.
+Choose the latest question and answer, everything from one question onward, an exact range, or the full thread.
+Question-suffix, exact-range, and full-thread choices preview the editable context block before the side thread closes.
+Escape returns, while Ctrl+C closes without bringing context back.
+
+The exact-range selector supports whole-line and editor-style character selection.
+It reports selected line, message, and approximate token counts.
+Press Space to select the current raw source line, use Up or Down to extend by lines, and press Space again to clear.
+Alternatively, move with arrow keys and extend a character selection with Shift plus an arrow key.
+Starting a Shift selection replaces an active line selection.
+Selected lines show a `●` marker as well as highlighting.
+Pi's configured keys control vertical navigation, bringing, and going back, with Up, Down, Enter, and Escape as defaults.
+Selection follows raw source text rather than terminal-wrapped rows.
+
+Bringing context closes the side thread and loads a deterministic, editable block into Pi's main editor without sending it.
+If a draft already exists, append is the recommended default.
+Replace is marked destructive and requires a second confirmation.
+Cancel returns to the side thread without changing either draft, and concurrent editor updates are preserved.
+A success message reports whether context was loaded, appended, or replaced and gives its approximate size.
+
+Without an explicit bring action, closing `/btw` never changes the main conversation.
+Non-empty threads remain in memory only for Resume during the current extension instance.
+`/new`, Pi `/resume`, `/reload`, extension replacement, and process restart discard retained threads.
+Unsent drafts, steering queues, interrupted answers, and model credentials are not retained.
 
 ## ⚙️ Settings
 
@@ -149,7 +169,7 @@ The normal location is `~/.pi/agent/pi-btw.json`.
 The `model` value uses `provider/model-id` format.
 Only the first `/` is the separator, so model IDs may contain additional slashes, such as `openrouter/anthropic/claude-sonnet`.
 The configured model must exist in Pi's model registry and have usable credentials.
-If it cannot be found or authenticated, pi-btw warns and falls back to the current session model.
+If it is missing or unauthenticated, pi-btw warns and falls back to the current session model.
 If neither model is available, `/btw` reports an error and stops.
 This selection affects only `/btw`; it does not change the main session model.
 
@@ -170,17 +190,21 @@ When **Same as main thread** is selected, shortcut changes stay local even when 
 If a shortcut write fails, the local change remains active and pi-btw warns that it was not remembered.
 A failed Settings-screen save instead restores the previous displayed value.
 
-A missing settings file is a side-effect-free read: pi-btw creates it only after a Settings change or a remembered shortcut change.
-Saves are ordered within the Pi process and published atomically with a same-directory temporary file and rename.
-They preserve `model` and unknown fields; malformed or invalid files block saves and remain unchanged.
-Settings must be valid UTF-8 and no larger than 64 KiB, so unexpectedly large or invalidly encoded files are rejected without being rewritten.
-Separate Pi processes and external editors are outside this in-process ordering boundary.
-The file is read for each `/btw` invocation, so edits apply without `/reload`.
+Reading a missing settings file has no side effects.
+Pi-btw creates it only after a Settings change or a remembered shortcut change.
+Within one Pi process, saves run in order and publish atomically through a same-directory temporary file and rename.
+Saves preserve `model` and unknown fields.
+Malformed or invalid files block saves and remain unchanged.
+Files must be valid UTF-8 and no larger than 64 KiB.
+Separate Pi processes and external editors are outside the in-process ordering boundary.
+The file is read for every `/btw` invocation, so edits apply without `/reload`.
 
-## 🧠 Why use pi-btw?
+## 🚧 Limitations
 
-Normal assistant messages become part of the main Pi conversation and can distract the coding agent from the task.
-`pi-btw` creates a lightweight side channel for context-aware questions, making it useful for pair programming, debugging, code review, and repository exploration.
+- `/btw` supports TUI mode only.
+- Resume state is memory-only and lasts only for the current extension instance.
+- A side thread retains the latest 40,000 characters of main-conversation context and adds a truncation notice when earlier content is omitted.
+- Clipboard access depends on Pi's host helper, the operating system, and the terminal.
 
 ## 🗂️ Package layout
 
@@ -193,12 +217,14 @@ packages/pi-btw/
 │   ├── index.ts
 │   ├── btw.ts
 │   ├── bring-to-main.ts
+│   ├── fullscreen-ui.ts
 │   ├── main-tree-picker.ts
 │   ├── menu.ts
 │   ├── settings.ts
 │   ├── side-thread.ts
 │   ├── text.ts
 │   └── transcript-pager.ts
+├── test/
 ├── README.md
 ├── LICENSE
 ├── tsconfig.json
