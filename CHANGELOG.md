@@ -1,5 +1,11 @@
 # @narumitw/pi-btw
 
+## 0.56.0
+
+### Minor Changes
+
+- f41734c: Add configurable manual fullscreen selection copying through Pi's effective copy keybinding, with paste-safe input and compatibility checks.
+
 ## 0.55.4
 
 ### Patch Changes
