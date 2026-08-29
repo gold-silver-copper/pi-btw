@@ -37,7 +37,16 @@ export interface BtwFullscreenLayoutComponent extends Component {
 	getFullscreenLayout(): Component;
 }
 
-export type BtwFullscreenTuiFactory = (parent: TUI, theme: Theme) => BtwFullscreenTui;
+export interface BtwFullscreenOptions {
+	copyOnSelect?: boolean;
+}
+
+export type BtwFullscreenTuiFactory = (
+	parent: TUI,
+	theme: Theme,
+	keybindings: KeybindingsManager,
+	options: BtwFullscreenOptions,
+) => BtwFullscreenTui;
 
 export interface BtwFullscreenDependencies {
 	createTui?: BtwFullscreenTuiFactory;
@@ -48,6 +57,7 @@ export interface BtwFullscreenDependencies {
 export type RunBtwFullscreen = <T>(
 	ctx: ExtensionCommandContext,
 	run: (ctx: ExtensionCommandContext) => Promise<T>,
+	options?: BtwFullscreenOptions,
 ) => Promise<T>;
 
 type FullscreenOutcome<T> = { kind: "completed"; value: T } | { kind: "failed"; error: unknown };
@@ -62,14 +72,22 @@ class FullscreenUiDisposedError extends Error {
 export async function runBtwFullscreen<T>(
 	ctx: ExtensionCommandContext,
 	run: (ctx: ExtensionCommandContext) => Promise<T>,
+	options: BtwFullscreenOptions = {},
 	dependencies: BtwFullscreenDependencies = {},
 ): Promise<T> {
 	const createTui =
 		dependencies.createTui ??
-		((parent: TUI, theme: Theme) =>
+		((
+			parent: TUI,
+			theme: Theme,
+			keybindings: KeybindingsManager,
+			fullscreenOptions: BtwFullscreenOptions,
+		) =>
 			createBtwFullscreenTui(
 				parent,
 				theme,
+				keybindings,
+				fullscreenOptions.copyOnSelect ?? true,
 				dependencies.openUrl ?? openUrlInBrowser,
 				dependencies.copyToClipboard ?? copyToHostClipboard,
 			));
@@ -94,6 +112,7 @@ export async function runBtwFullscreen<T>(
 					done(value);
 				},
 				createTui,
+				options,
 			);
 			return host;
 		},
@@ -169,25 +188,47 @@ class BtwTuiAltScreen extends TuiAltScreen {
 function createBtwFullscreenTui(
 	parent: TUI,
 	theme: Theme,
+	keybindings: KeybindingsManager,
+	copyOnSelect: boolean,
 	openUrl: (url: string) => void,
 	copyToClipboard: (text: string) => Promise<void>,
 ): BtwFullscreenTui {
 	const styleSearchMatch = (text: string) =>
 		theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
-	return new BtwTuiAltScreen(parent.terminal, parent.getShowHardwareCursor(), undefined, {
-		mouse: true,
-		searchMatchStyle: (text) => theme.underline(styleSearchMatch(text)),
-		searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
-		openUrl,
-		copySelection: async (text) => {
-			try {
-				await copyToClipboard(text);
-				return true;
-			} catch {
-				return false;
-			}
+	const fullscreen = new BtwTuiAltScreen(
+		parent.terminal,
+		parent.getShowHardwareCursor(),
+		undefined,
+		{
+			mouse: true,
+			copyOnSelect,
+			searchMatchStyle: (text) => theme.underline(styleSearchMatch(text)),
+			searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
+			openUrl,
+			copySelection: async (text) => {
+				try {
+					await copyToClipboard(text);
+					return true;
+				} catch {
+					return false;
+				}
+			},
 		},
-	});
+	);
+	if (!copyOnSelect) {
+		fullscreen.addInputListener((data) => {
+			if (isKeyRelease(data) || !keybindings.matches(data, "app.message.copy")) {
+				return undefined;
+			}
+			if (!fullscreen.hasActiveSelection()) {
+				fullscreen.flash("No selection to copy");
+				return { consume: true };
+			}
+			void fullscreen.copyActiveSelectionToClipboard().catch(() => fullscreen.flash("Copy failed"));
+			return { consume: true };
+		});
+	}
+	return fullscreen;
 }
 
 // Pi does not export its browser opener, so mirror its shell-free launcher for this isolated TUI.
@@ -226,6 +267,7 @@ class BtwFullscreenHost<T> implements Component {
 		private readonly run: (ctx: ExtensionCommandContext) => Promise<T>,
 		private readonly done: (outcome: FullscreenOutcome<T>) => void,
 		private readonly createTui: BtwFullscreenTuiFactory,
+		private readonly options: BtwFullscreenOptions,
 	) {
 		queueMicrotask(() => void this.start());
 	}
@@ -255,7 +297,7 @@ class BtwFullscreenHost<T> implements Component {
 			this.parent.stop({ preserveScreen: true });
 			this.parentStopped = true;
 			if (this.disposed) throw new FullscreenUiDisposedError();
-			this.fullscreen = this.createTui(this.parent, this.theme);
+			this.fullscreen = this.createTui(this.parent, this.theme, this.keybindings, this.options);
 			this.fullscreenCreated = true;
 			this.fullscreen.start();
 			// Waiting for the custom promise would leave follow-up keys bound to the side TUI.

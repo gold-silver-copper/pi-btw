@@ -256,6 +256,7 @@ test("btw menu opens Pi-style thinking settings and cancellation is read-only", 
 		assert.match(settings, /Thinking level\s+Same as main thread/);
 		assert.match(settings, /Currently medium/);
 		assert.match(settings, /Remember thinking level changes\s+On/);
+		assert.match(settings, /Copy selection automatically\s+On/);
 		tui.press("ctrl+c");
 
 		assert.equal(await running, "closed");
@@ -333,6 +334,33 @@ test("btw settings save thinking and remembering immediately while preserving un
 	});
 });
 
+test("btw settings save automatic selection copying immediately and preserve unknown fields", async () => {
+	await withMenu(async ({ settingsPath, tui, ctx, notifications }) => {
+		await writeFile(settingsPath, '{"future":{"kept":true}}\n', "utf8");
+		const running = showBtwCommandMenu(ctx, {
+			settingsPath,
+			currentThinkingLevel: "medium",
+			availableThinkingLevels: ["off", "low", "medium", "high"],
+		});
+		await openSettings(tui);
+		tui.press("tui.select.down");
+		tui.press("tui.select.down");
+		assert.match(tui.render().join("\n"), /Copy selection automatically\s+On/);
+		tui.press("tui.select.confirm");
+		await tui.waitForPending();
+		await tui.waitForOpen();
+
+		assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")), {
+			future: { kept: true },
+			fullscreenCopyOnSelect: false,
+		});
+		assert.match(tui.render().join("\n"), /Copy selection automatically\s+Off/);
+		assert.ok(notifications.some(({ message }) => /automatically: Off/i.test(message)));
+		tui.press("ctrl+c");
+		assert.equal(await running, "closed");
+	});
+});
+
 test("btw settings reject failed saves and restore the prior displayed value", async () => {
 	await withMenu(async ({ settingsPath, tui, ctx, notifications }) => {
 		const running = showBtwCommandMenu(ctx, {
@@ -344,12 +372,14 @@ test("btw settings reject failed saves and restore the prior displayed value", a
 			},
 		});
 		await openSettings(tui);
+		tui.press("tui.select.down");
+		tui.press("tui.select.down");
 		tui.press("tui.select.confirm");
 		await tui.waitForPending();
 		await tui.waitForOpen();
 		const narrow = tui.render(32);
 		assert.ok(narrow.every((line) => visibleWidth(line) <= 32));
-		assert.match(tui.render(80).join("\n"), /Thinking level\s+Same as main thread/);
+		assert.match(tui.render(80).join("\n"), /Copy selection automatically\s+On/);
 		const failureMessage = notifications[0]?.message ?? "";
 		assert.match(failureMessage, /previous value remains active.*disk full/i);
 		assert.equal(
@@ -425,6 +455,8 @@ test("disposing btw settings aborts and drains an in-flight save without notific
 			},
 		});
 		await openSettings(tui);
+		tui.press("tui.select.down");
+		tui.press("tui.select.down");
 		tui.press("tui.select.confirm");
 		await saveStarted;
 		tui.dispose();

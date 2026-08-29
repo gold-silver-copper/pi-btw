@@ -348,6 +348,7 @@ test("btw command routes no arguments through the menu and preserves direct ques
 	};
 	const menuCalls: string[] = [];
 	let fullscreenRuns = 0;
+	const fullscreenCopyModes: Array<boolean | undefined> = [];
 	const threadStarts: Array<{
 		initialQuestion?: string;
 		thinkingLevel: string;
@@ -360,8 +361,9 @@ test("btw command routes no arguments through the menu and preserves direct ques
 		},
 		loadSettings: async () => ({ thinkingLevel: "medium" }),
 		resolveModel: async () => ({ kind: "selected", selected }),
-		runFullscreen: async (ctx, run) => {
+		runFullscreen: async (ctx, run, options) => {
 			fullscreenRuns += 1;
+			fullscreenCopyModes.push(options?.copyOnSelect);
 			return run(ctx);
 		},
 		runThread: async (options) => {
@@ -389,6 +391,7 @@ test("btw command routes no arguments through the menu and preserves direct ques
 
 	assert.deepEqual(menuCalls, ["menu"]);
 	assert.equal(fullscreenRuns, 2);
+	assert.deepEqual(fullscreenCopyModes, [true, true]);
 	assert.equal(idleWaits, 0);
 	assert.deepEqual(threadStarts, [
 		{
@@ -403,6 +406,36 @@ test("btw command routes no arguments through the menu and preserves direct ques
 		},
 	]);
 	assert.deepEqual(mock.thinkingLevels, []);
+});
+
+test("btw resolves automatic selection copying once from each invocation's loaded settings", async () => {
+	const mock = createMockPi();
+	const selected = {
+		model: { provider: "test", id: "side" } as Model<Api>,
+		auth: { apiKey: "key" },
+	};
+	const loaded = [{}, {}, { fullscreenCopyOnSelect: false }] as const;
+	const copyModes: Array<boolean | undefined> = [];
+	let settingsReads = 0;
+	btw(mock.pi, {
+		loadSettings: async () => loaded[settingsReads++] ?? {},
+		resolveModel: async () => ({ kind: "selected", selected }),
+		runFullscreen: async (ctx, run, options) => {
+			copyModes.push(options?.copyOnSelect);
+			return run(ctx);
+		},
+		runThread: async () => ({ kind: "closed" }),
+	});
+	const command = mock.commands.get("btw");
+	assert.ok(command);
+	const interactive = createMockContext({ mode: "tui", hasUI: true });
+
+	await command.handler("missing default", interactive.ctx);
+	await command.handler("omitted default", interactive.ctx);
+	await command.handler("manual override", interactive.ctx);
+
+	assert.equal(settingsReads, 3);
+	assert.deepEqual(copyModes, [true, true, false]);
 });
 
 test("btw same-as-main mode starts fresh threads from the current main level without remembering shortcut changes", async () => {
@@ -636,6 +669,7 @@ test("btw keeps multiple in-memory threads, resumes the selected one, and keeps 
 		updatedAt: number;
 	}> = [];
 	const initialQuestions: Array<string | undefined> = [];
+	const fullscreenCopyModes: Array<boolean | undefined> = [];
 	let modelResolutions = 0;
 	btw(mock.pi, {
 		showCommandMenu: (async (
@@ -651,7 +685,10 @@ test("btw keeps multiple in-memory threads, resumes the selected one, and keeps 
 			modelResolutions += 1;
 			return { kind: "selected", selected };
 		},
-		runFullscreen: async (ctx, run) => run(ctx),
+		runFullscreen: async (ctx, run, options) => {
+			fullscreenCopyModes.push(options?.copyOnSelect);
+			return run(ctx);
+		},
 		runThread: (async (options: {
 			initialQuestion?: string;
 			state: {
@@ -700,6 +737,7 @@ test("btw keeps multiple in-memory threads, resumes the selected one, and keeps 
 	assert.notEqual(states[2], states[0]);
 	assert.equal(states[2]?.thread.turns.length, 1);
 	assert.equal(modelResolutions, 3);
+	assert.deepEqual(fullscreenCopyModes, [true, true, true]);
 	assert.deepEqual(menuSnapshots, [
 		[],
 		[{ id: "btw-1", title: "First side topic", questionCount: 1 }],

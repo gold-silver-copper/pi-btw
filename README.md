@@ -74,7 +74,7 @@ When non-empty threads exist in memory, **Resume side thread** opens a bounded s
 Search matches the first question and question count while retaining each raw thread ID.
 Each row uses the first question as its fixed title and shows the question count.
 Rows are ordered by the newest recorded answer or visible error; opening and closing without a new result does not reorder them.
-**Settings** controls the starting thinking level and whether fixed-level shortcut changes are remembered.
+**Settings** controls the starting thinking level, fixed-level shortcut memory, and automatic selection copying.
 `/btw <question>` bypasses the manager and always starts a new thread.
 
 ### Use the side-thread workspace
@@ -88,9 +88,13 @@ Messages use Pi's normal user and assistant presentation without turn numbers or
 Type a question and press Enter for each turn.
 Previous successful questions and answers remain visible and available to the side model.
 
-Drag the primary mouse button across transcript text to request a copy through Pi's host clipboard helper.
-The view reports `Copied!` when Pi accepts the request and `Copy failed` when Pi rejects it.
+Drag the primary mouse button across transcript text to select it.
+Automatic selection copying is on by default and immediately requests a copy through Pi's host clipboard helper.
+When **Copy selection automatically** is off, the selection stays highlighted and Pi's effective `app.message.copy` binding copies it.
+The view reports `No selection to copy` when that binding is used without an active selection.
+It reports `Copied!` when Pi accepts a clipboard request and `Copy failed` when Pi rejects it.
 Actual clipboard access still depends on the operating system and terminal.
+Ctrl+C always cancels the side flow, even when `app.message.copy` is also mapped to Ctrl+C.
 
 Press `Ctrl+Shift+F` to search completed or in-progress transcript content.
 Press Enter or `Ctrl+G` for the next match, `Shift+Enter` or `Ctrl+Shift+G` for the previous match, and Escape to close search.
@@ -162,7 +166,8 @@ The normal location is `~/.pi/agent/pi-btw.json`.
 {
   "model": "anthropic/claude-sonnet-4-5",
   "thinkingLevel": "low",
-  "rememberThinkingLevelChanges": true
+  "rememberThinkingLevelChanges": true,
+  "fullscreenCopyOnSelect": true
 }
 ```
 
@@ -189,6 +194,10 @@ When a fixed thinking level is selected and remembering is on, the concrete leve
 When **Same as main thread** is selected, shortcut changes stay local even when remembering is on.
 If a shortcut write fails, the local change remains active and pi-btw warns that it was not remembered.
 A failed Settings-screen save instead restores the previous displayed value.
+
+`fullscreenCopyOnSelect` controls only pi-btw's dedicated fullscreen view and defaults to `true` when omitted.
+Turn **Copy selection automatically** off to retain highlighted selections and copy them with Pi's effective `app.message.copy` binding.
+Pi-btw does not inherit Pi core's setting of the same name because Pi's public extension API does not expose its effective value.
 
 Reading a missing settings file has no side effects.
 Pi-btw creates it only after a Settings change or a remembered shortcut change.

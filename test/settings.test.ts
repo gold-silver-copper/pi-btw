@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { test } from "vitest";
 import {
 	BTW_SETTINGS_FILE,
+	DEFAULT_FULLSCREEN_COPY_ON_SELECT,
 	DEFAULT_REMEMBER_THINKING_LEVEL_CHANGES,
+	effectiveFullscreenCopyOnSelect,
 	effectiveRememberThinkingLevelChanges,
 	normalizeBtwSettings,
 	readBtwSettings,
@@ -21,23 +23,35 @@ async function withTempSettings(run: (settingsPath: string) => Promise<void>): P
 	}
 }
 
-test("btw settings default remembering on without materializing a missing file", async () => {
+test("btw settings defaults remain side-effect free when the file is missing", async () => {
 	await withTempSettings(async (settingsPath) => {
+		assert.equal(DEFAULT_FULLSCREEN_COPY_ON_SELECT, true);
 		assert.equal(DEFAULT_REMEMBER_THINKING_LEVEL_CHANGES, true);
 		assert.deepEqual(await readBtwSettings(settingsPath), { kind: "missing" });
+		assert.equal(effectiveFullscreenCopyOnSelect({}), true);
 		assert.equal(effectiveRememberThinkingLevelChanges({}), true);
 		await assert.rejects(readFile(settingsPath, "utf8"), { code: "ENOENT" });
 	});
 });
 
-test("btw settings validate the optional remembered-change setting", () => {
-	assert.deepEqual(normalizeBtwSettings({ rememberThinkingLevelChanges: true }), {
-		rememberThinkingLevelChanges: true,
-	});
-	assert.deepEqual(normalizeBtwSettings({ rememberThinkingLevelChanges: false }), {
-		rememberThinkingLevelChanges: false,
-	});
+test("btw settings validate optional boolean settings", () => {
+	assert.deepEqual(
+		normalizeBtwSettings({
+			rememberThinkingLevelChanges: true,
+			fullscreenCopyOnSelect: false,
+		}),
+		{ rememberThinkingLevelChanges: true, fullscreenCopyOnSelect: false },
+	);
+	assert.deepEqual(
+		normalizeBtwSettings({
+			rememberThinkingLevelChanges: false,
+			fullscreenCopyOnSelect: true,
+		}),
+		{ rememberThinkingLevelChanges: false, fullscreenCopyOnSelect: true },
+	);
+	assert.equal(effectiveFullscreenCopyOnSelect({ fullscreenCopyOnSelect: false }), false);
 	assert.equal(normalizeBtwSettings({ rememberThinkingLevelChanges: "yes" }), undefined);
+	assert.equal(normalizeBtwSettings({ fullscreenCopyOnSelect: "no" }), undefined);
 });
 
 test("btw settings preserve omitted thinking levels for backward compatibility", async () => {
@@ -80,23 +94,43 @@ test("btw settings can clear thinking level while preserving other fields", asyn
 test("btw settings updates preserve unknown fields and create only on explicit save", async () => {
 	await withTempSettings(async (settingsPath) => {
 		await updateBtwSettings(
-			{ thinkingLevel: "low", rememberThinkingLevelChanges: true },
+			{
+				thinkingLevel: "low",
+				rememberThinkingLevelChanges: true,
+				fullscreenCopyOnSelect: false,
+			},
 			{ settingsPath },
 		);
 		const first = JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, unknown>;
-		assert.deepEqual(first, { thinkingLevel: "low", rememberThinkingLevelChanges: true });
+		assert.deepEqual(first, {
+			thinkingLevel: "low",
+			rememberThinkingLevelChanges: true,
+			fullscreenCopyOnSelect: false,
+		});
 
-		await writeFile(settingsPath, '{"future":{"kept":true},"thinkingLevel":"low"}\n', "utf8");
+		await writeFile(
+			settingsPath,
+			'{"future":{"kept":true},"thinkingLevel":"low","fullscreenCopyOnSelect":false}\n',
+			"utf8",
+		);
 		await updateBtwSettings({ thinkingLevel: "high" }, { settingsPath });
 		const updated = JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, unknown>;
-		assert.deepEqual(updated, { future: { kept: true }, thinkingLevel: "high" });
+		assert.deepEqual(updated, {
+			future: { kept: true },
+			thinkingLevel: "high",
+			fullscreenCopyOnSelect: false,
+		});
 	});
 });
 
 test("btw settings reject malformed or invalid documents without changing their bytes", async () => {
 	await withTempSettings(async (settingsPath) => {
 		await updateBtwSettings({ thinkingLevel: "low" }, { settingsPath });
-		for (const contents of ["{broken", '{"thinkingLevel":"huge"}\n']) {
+		for (const contents of [
+			"{broken",
+			'{"thinkingLevel":"huge"}\n',
+			'{"fullscreenCopyOnSelect":"yes"}\n',
+		]) {
 			await writeFile(settingsPath, contents, "utf8");
 			await assert.rejects(
 				updateBtwSettings({ thinkingLevel: "high" }, { settingsPath }),
@@ -223,13 +257,14 @@ test("btw settings serialize rapid updates in invocation order and recover after
 			},
 		);
 		const second = updateBtwSettings({ thinkingLevel: "medium" }, { settingsPath });
+		const third = updateBtwSettings({ fullscreenCopyOnSelect: false }, { settingsPath });
 		const coordinatedRead = readBtwSettings(settingsPath);
 		await firstReached;
 		releaseFirst();
-		await Promise.all([first, second]);
+		await Promise.all([first, second, third]);
 		assert.deepEqual(await coordinatedRead, {
 			kind: "loaded",
-			settings: { thinkingLevel: "medium" },
+			settings: { thinkingLevel: "medium", fullscreenCopyOnSelect: false },
 		});
 		assert.equal(
 			(JSON.parse(await readFile(settingsPath, "utf8")) as { thinkingLevel: string }).thinkingLevel,

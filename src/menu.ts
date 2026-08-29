@@ -9,6 +9,7 @@ import {
 	type BtwSettings,
 	type BtwSettingsPatch,
 	btwSettingsPath,
+	effectiveFullscreenCopyOnSelect,
 	effectiveRememberThinkingLevelChanges,
 	readBtwSettings,
 	type UpdateBtwSettingsOptions,
@@ -48,7 +49,13 @@ export type BtwCommandMenuResult =
 	| { kind: "resume"; threadId: string };
 
 type BtwMenuScreen = "main" | "resume" | "settings" | "invalid";
-type BtwMenuAction = "start" | "start-tree" | "resume" | "set-thinking" | "set-remember";
+type BtwMenuAction =
+	| "start"
+	| "start-tree"
+	| "resume"
+	| "set-thinking"
+	| "set-remember"
+	| "set-fullscreen-copy";
 const SAME_AS_MAIN_THREAD = "Same as main thread";
 type BtwCustomOptions = Parameters<ExtensionCommandContext["ui"]["custom"]>[1];
 
@@ -111,6 +118,7 @@ export async function showBtwCommandMenu(
 				title: "Pi BTW",
 				lines: [
 					`Thinking: ${displayThinkingSummary(state.settings)} · Remember changes: ${displayRememberSummary(state.settings)}`,
+					`Copy on select: ${effectiveFullscreenCopyOnSelect(state.settings) ? "On" : "Off"}`,
 				],
 				items: [
 					{
@@ -138,7 +146,7 @@ export async function showBtwCommandMenu(
 					{
 						id: "settings",
 						label: "Settings",
-						description: "Choose pi-btw thinking level and fixed-level shortcut memory",
+						description: "Choose thinking, shortcut memory, and selection copying",
 						to: state.kind === "invalid" ? "invalid" : "settings",
 					},
 				],
@@ -177,6 +185,15 @@ export async function showBtwCommandMenu(
 						currentValue: effectiveRememberThinkingLevelChanges(state.settings) ? "On" : "Off",
 						values: ["On", "Off"],
 						action: "set-remember",
+					},
+					{
+						id: "fullscreenCopyOnSelect",
+						label: "Copy selection automatically",
+						description:
+							"Copy mouse selections immediately instead of with the configured copy key.",
+						currentValue: effectiveFullscreenCopyOnSelect(state.settings) ? "On" : "Off",
+						values: ["On", "Off"],
+						action: "set-fullscreen-copy",
 					},
 				],
 			}),
@@ -234,6 +251,21 @@ export async function showBtwCommandMenu(
 					);
 					if (signal.aborted) return { kind: "rejected" };
 					notifySafely(ctx, `Remember thinking level changes: ${value}.`, "info");
+					return { kind: "stay" };
+				} catch (error) {
+					if (!signal.aborted) notifySaveFailure(ctx, error);
+					return { kind: "rejected" };
+				}
+			},
+			"set-fullscreen-copy": async ({ value, signal }) => {
+				if (value !== "On" && value !== "Off") return { kind: "rejected" };
+				try {
+					await updateSettings(
+						{ fullscreenCopyOnSelect: value === "On" },
+						{ settingsPath, signal },
+					);
+					if (signal.aborted) return { kind: "rejected" };
+					notifySafely(ctx, `Copy selection automatically: ${value}.`, "info");
 					return { kind: "stay" };
 				} catch (error) {
 					if (!signal.aborted) notifySaveFailure(ctx, error);

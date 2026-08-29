@@ -33,6 +33,7 @@ import {
 } from "./menu.js";
 import {
 	type BtwSettings,
+	effectiveFullscreenCopyOnSelect,
 	effectiveRememberThinkingLevelChanges,
 	parseBtwModelReference,
 	readBtwSettings,
@@ -193,7 +194,7 @@ export async function loadBtwThinkingLevel(
 
 	options.warn?.(
 		sanitizeSingleLine(
-			`pi-btw settings ignored: ${settings.reason}; expected optional model "provider/model-id", omitted thinkingLevel for Same as main thread or thinkingLevel "${BTW_THINKING_LEVELS.join('" | "')}", and boolean rememberThinkingLevelChanges. Using current Pi thinking level.`,
+			`pi-btw settings ignored: ${settings.reason}; expected optional model "provider/model-id", omitted thinkingLevel for Same as main thread or thinkingLevel "${BTW_THINKING_LEVELS.join('" | "')}", boolean rememberThinkingLevelChanges, and boolean fullscreenCopyOnSelect. Using current Pi thinking level.`,
 		),
 	);
 	return currentThinkingLevel;
@@ -314,31 +315,35 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
 			const startingTurnCount = state?.thread.turns.length ?? 0;
 
 			try {
-				await runFullscreen(ctx, (fullscreenCtx) => {
-					if (!state) {
-						const createdAt = Date.now();
-						state = {
-							id: `btw-${nextThreadNumber}`,
-							thread: createSideThread(
-								selectedConversationContext ??
-									buildConversationContext(fullscreenCtx.sessionManager.getBranch()),
-							),
-							thinkingLevel: settings.thinkingLevel ?? pi.getThinkingLevel(),
-							createdAt,
-							updatedAt: createdAt,
-						};
-						nextThreadNumber += 1;
-					}
-					return runThread({
-						initialQuestion: question || undefined,
-						selected: resolution.selected,
-						thinkingLevel: state.thinkingLevel,
-						rememberThinkingLevelChanges:
-							!sameAsMainThinkingLevel && effectiveRememberThinkingLevelChanges(settings),
-						state,
-						ctx: fullscreenCtx,
-					});
-				});
+				await runFullscreen(
+					ctx,
+					(fullscreenCtx) => {
+						if (!state) {
+							const createdAt = Date.now();
+							state = {
+								id: `btw-${nextThreadNumber}`,
+								thread: createSideThread(
+									selectedConversationContext ??
+										buildConversationContext(fullscreenCtx.sessionManager.getBranch()),
+								),
+								thinkingLevel: settings.thinkingLevel ?? pi.getThinkingLevel(),
+								createdAt,
+								updatedAt: createdAt,
+							};
+							nextThreadNumber += 1;
+						}
+						return runThread({
+							initialQuestion: question || undefined,
+							selected: resolution.selected,
+							thinkingLevel: state.thinkingLevel,
+							rememberThinkingLevelChanges:
+								!sameAsMainThinkingLevel && effectiveRememberThinkingLevelChanges(settings),
+							state,
+							ctx: fullscreenCtx,
+						});
+					},
+					{ copyOnSelect: effectiveFullscreenCopyOnSelect(settings) },
+				);
 			} finally {
 				if (state?.title && state.thread.turns.length > 0) {
 					if (state.thread.turns.length > startingTurnCount) {

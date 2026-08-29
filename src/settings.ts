@@ -6,6 +6,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { BTW_THINKING_LEVELS, type BtwThinkingLevel } from "./side-thread.js";
 
 export const BTW_SETTINGS_FILE = "pi-btw.json";
+export const DEFAULT_FULLSCREEN_COPY_ON_SELECT = true;
 export const DEFAULT_REMEMBER_THINKING_LEVEL_CHANGES = true;
 const MAX_SETTINGS_BYTES = 64 * 1024;
 
@@ -13,6 +14,7 @@ export interface BtwSettings {
 	model?: string;
 	thinkingLevel?: BtwThinkingLevel;
 	rememberThinkingLevelChanges?: boolean;
+	fullscreenCopyOnSelect?: boolean;
 }
 
 export type BtwSettingsLoadResult =
@@ -23,6 +25,7 @@ export type BtwSettingsLoadResult =
 export interface BtwSettingsPatch {
 	thinkingLevel?: BtwThinkingLevel;
 	rememberThinkingLevelChanges?: boolean;
+	fullscreenCopyOnSelect?: boolean;
 }
 
 export interface UpdateBtwSettingsOptions {
@@ -58,6 +61,11 @@ export function normalizeBtwSettings(value: unknown): BtwSettings | undefined {
 		if (typeof remember !== "boolean") return undefined;
 		settings.rememberThinkingLevelChanges = remember;
 	}
+	if (Object.hasOwn(value, "fullscreenCopyOnSelect")) {
+		const copyOnSelect = Reflect.get(value, "fullscreenCopyOnSelect");
+		if (typeof copyOnSelect !== "boolean") return undefined;
+		settings.fullscreenCopyOnSelect = copyOnSelect;
+	}
 	return settings;
 }
 
@@ -68,6 +76,10 @@ export function parseBtwModelReference(
 	const separator = reference.indexOf("/");
 	if (separator <= 0 || separator === reference.length - 1) return undefined;
 	return { provider: reference.slice(0, separator), modelId: reference.slice(separator + 1) };
+}
+
+export function effectiveFullscreenCopyOnSelect(settings: BtwSettings): boolean {
+	return settings.fullscreenCopyOnSelect ?? DEFAULT_FULLSCREEN_COPY_ON_SELECT;
 }
 
 export function effectiveRememberThinkingLevelChanges(settings: BtwSettings): boolean {
@@ -232,6 +244,10 @@ function applyBtwSettingsPatch(
 	}
 	if (Object.hasOwn(patch, "rememberThinkingLevelChanges")) {
 		updated.rememberThinkingLevelChanges = patch.rememberThinkingLevelChanges;
+	}
+	if (Object.hasOwn(patch, "fullscreenCopyOnSelect")) {
+		if (patch.fullscreenCopyOnSelect === undefined) delete updated.fullscreenCopyOnSelect;
+		else updated.fullscreenCopyOnSelect = patch.fullscreenCopyOnSelect;
 	}
 	return updated;
 }
