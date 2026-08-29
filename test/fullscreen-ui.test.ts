@@ -349,6 +349,7 @@ async function startClipboardSelection(
 		copyOnSelect?: boolean;
 		copyBinding?: "ctrl+c" | "ctrl+x" | "ctrl+y";
 		select?: boolean;
+		onInput?: (data: string) => void;
 	} = {},
 ) {
 	const copyBinding = options.copyBinding ?? "ctrl+y";
@@ -364,6 +365,7 @@ async function startClipboardSelection(
 				closeSide = () => done("closed");
 				return {
 					render: () => ["\u001b[31mcopy me\u001b[39m"],
+					handleInput: options.onInput,
 					invalidate() {},
 					dispose() {},
 				};
@@ -656,6 +658,32 @@ test("manual fullscreen retains a selection and copies it through a non-default 
 	assert.equal(await running, "closed");
 });
 
+test("manual fullscreen forwards split bracketed paste containing the copy binding", async () => {
+	let copyCalls = 0;
+	const receivedInput: string[] = [];
+	const { harness, running, closeSide, copyInput } = await startClipboardSelection(
+		async () => {
+			copyCalls += 1;
+		},
+		{
+			copyOnSelect: false,
+			copyBinding: "ctrl+x",
+			select: false,
+			onInput: (data) => receivedInput.push(data),
+		},
+	);
+
+	harness.input("\u001b[200~");
+	harness.input(copyInput);
+	harness.input("pasted");
+	harness.input("\u001b[201~");
+	await flushAsyncWork();
+	assert.equal(copyCalls, 0);
+	assert.deepEqual(receivedInput, ["\u001b[200~", copyInput, "pasted", "\u001b[201~"]);
+	closeSide();
+	assert.equal(await running, "closed");
+});
+
 test("manual fullscreen reports no selection without using another copy source", async () => {
 	let copyCalls = 0;
 	const { harness, running, sideTui, closeSide, copyInput } = await startClipboardSelection(
@@ -688,6 +716,25 @@ test("manual fullscreen contains clipboard failure and reports it", async () => 
 	assert.equal(harness.writes.join("").includes("Copy failed"), true);
 	closeSide();
 	assert.equal(await running, "closed");
+});
+
+test("manual fullscreen fails safely when Pi lacks manual selection APIs", async () => {
+	const harness = createNativeFullscreenHarness();
+	let runCalled = false;
+	await assert.rejects(
+		runBtwFullscreen(
+			harness.ctx,
+			async () => {
+				runCalled = true;
+				return "unused";
+			},
+			{ copyOnSelect: false },
+			{ manualSelectionCopySupported: false },
+		),
+		/update Pi or enable automatic selection copying/i,
+	);
+	assert.equal(runCalled, false);
+	assert.deepEqual(harness.events, ["parent.stop:true", "parent.start", "parent.renderNow:false"]);
 });
 
 test("manual fullscreen ignores a release event for the configured copy binding", async () => {

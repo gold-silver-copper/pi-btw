@@ -91,6 +91,8 @@ Previous successful questions and answers remain visible and available to the si
 Drag the primary mouse button across transcript text to select it.
 Automatic selection copying is on by default and immediately requests a copy through Pi's host clipboard helper.
 When **Copy selection automatically** is off, the selection stays highlighted and Pi's effective `app.message.copy` binding copies it.
+Manual mode requires Pi's current fullscreen selection APIs.
+If those APIs are unavailable, pi-btw restores the main TUI and asks you to update Pi or re-enable automatic copying.
 The view reports `No selection to copy` when that binding is used without an active selection.
 It reports `Copied!` when Pi accepts a clipboard request and `Copy failed` when Pi rejects it.
 Actual clipboard access still depends on the operating system and terminal.

@@ -52,6 +52,7 @@ export interface BtwFullscreenDependencies {
 	createTui?: BtwFullscreenTuiFactory;
 	openUrl?: (url: string) => void;
 	copyToClipboard?: (text: string) => Promise<void>;
+	manualSelectionCopySupported?: boolean;
 }
 
 export type RunBtwFullscreen = <T>(
@@ -88,6 +89,7 @@ export async function runBtwFullscreen<T>(
 				theme,
 				keybindings,
 				fullscreenOptions.copyOnSelect ?? true,
+				dependencies.manualSelectionCopySupported ?? hasManualSelectionCopyApi(),
 				dependencies.openUrl ?? openUrlInBrowser,
 				dependencies.copyToClipboard ?? copyToHostClipboard,
 			));
@@ -185,14 +187,30 @@ class BtwTuiAltScreen extends TuiAltScreen {
 	}
 }
 
+const BRACKETED_PASTE_START = "\u001b[200~";
+const BRACKETED_PASTE_END = "\u001b[201~";
+
+function hasManualSelectionCopyApi(): boolean {
+	return (
+		typeof TuiAltScreen.prototype.hasActiveSelection === "function" &&
+		typeof TuiAltScreen.prototype.copyActiveSelectionToClipboard === "function"
+	);
+}
+
 function createBtwFullscreenTui(
 	parent: TUI,
 	theme: Theme,
 	keybindings: KeybindingsManager,
 	copyOnSelect: boolean,
+	manualSelectionCopySupported: boolean,
 	openUrl: (url: string) => void,
 	copyToClipboard: (text: string) => Promise<void>,
 ): BtwFullscreenTui {
+	if (!copyOnSelect && !manualSelectionCopySupported) {
+		throw new Error(
+			"Manual fullscreen selection copying is unavailable in this Pi version; update Pi or enable automatic selection copying.",
+		);
+	}
 	const styleSearchMatch = (text: string) =>
 		theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
 	const fullscreen = new BtwTuiAltScreen(
@@ -216,8 +234,20 @@ function createBtwFullscreenTui(
 		},
 	);
 	if (!copyOnSelect) {
+		let isInBracketedPaste = false;
 		fullscreen.addInputListener((data) => {
-			if (isKeyRelease(data) || !keybindings.matches(data, "app.message.copy")) {
+			const wasInBracketedPaste = isInBracketedPaste;
+			const startsBracketedPaste = data.includes(BRACKETED_PASTE_START);
+			if (startsBracketedPaste) isInBracketedPaste = true;
+			if (isInBracketedPaste && data.includes(BRACKETED_PASTE_END)) {
+				isInBracketedPaste = false;
+			}
+			if (
+				wasInBracketedPaste ||
+				startsBracketedPaste ||
+				isKeyRelease(data) ||
+				!keybindings.matches(data, "app.message.copy")
+			) {
 				return undefined;
 			}
 			if (!fullscreen.hasActiveSelection()) {
