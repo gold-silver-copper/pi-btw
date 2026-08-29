@@ -154,6 +154,10 @@ function dispatchBtwInput(listeners: BtwInputListeners, data: string): TuiInputL
 }
 
 class BtwTuiAltScreen extends TuiAltScreen {
+	hasFocusedOverlay(): boolean {
+		return this.isOverlayFocused();
+	}
+
 	override addInputListener(listener: TuiInputListener): () => void {
 		let listeners = btwInputListeners.get(this);
 		if (!listeners) {
@@ -245,6 +249,7 @@ function createBtwFullscreenTui(
 			if (
 				wasInBracketedPaste ||
 				startsBracketedPaste ||
+				fullscreen.hasFocusedOverlay() ||
 				isKeyRelease(data) ||
 				!keybindings.matches(data, "app.message.copy")
 			) {

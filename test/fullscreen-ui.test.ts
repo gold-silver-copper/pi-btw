@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { stripVTControlCharacters } from "node:util";
 import {
 	type Component,
 	Container,
@@ -27,9 +28,9 @@ const BTW_TEST_KEYBINDINGS = {
 	},
 } as const;
 
-function createBtwTestKeybindings(
-	copyBinding: "ctrl+c" | "ctrl+x" | "ctrl+y" = "ctrl+y",
-): KeybindingsManager {
+type BtwTestCopyBinding = "ctrl+c" | "ctrl+x" | "ctrl+y" | "x";
+
+function createBtwTestKeybindings(copyBinding: BtwTestCopyBinding = "ctrl+y"): KeybindingsManager {
 	return new KeybindingsManager(BTW_TEST_KEYBINDINGS, {
 		"app.message.copy": copyBinding,
 	});
@@ -38,6 +39,7 @@ function createBtwTestKeybindings(
 function inputForCopyBinding(keybindings: KeybindingsManager): string {
 	const [binding] = keybindings.getKeys("app.message.copy");
 	assert.ok(binding);
+	if (binding.length === 1) return binding;
 	assert.match(binding, /^ctrl\+[a-z]$/u);
 	return String.fromCharCode(binding.charCodeAt("ctrl+".length) & 31);
 }
@@ -347,7 +349,7 @@ async function startClipboardSelection(
 	copy: (text: string) => Promise<void>,
 	options: {
 		copyOnSelect?: boolean;
-		copyBinding?: "ctrl+c" | "ctrl+x" | "ctrl+y";
+		copyBinding?: BtwTestCopyBinding;
 		select?: boolean;
 		onInput?: (data: string) => void;
 	} = {},
@@ -654,6 +656,28 @@ test("manual fullscreen retains a selection and copies it through a non-default 
 	sideTui.renderNow(true);
 	assert.deepEqual(copied, ["copy me"]);
 	assert.equal(harness.writes.join("").includes("Copied!"), true);
+	closeSide();
+	assert.equal(await running, "closed");
+});
+
+test("manual fullscreen defers a printable copy binding while transcript search owns focus", async () => {
+	let copyCalls = 0;
+	const { harness, running, sideTui, closeSide, copyInput } = await startClipboardSelection(
+		async () => {
+			copyCalls += 1;
+		},
+		{ copyOnSelect: false, copyBinding: "x" },
+	);
+	const searchableTui = sideTui as TUI & { hasFocusedOverlay(): boolean };
+
+	harness.input("\u001b[102;6u");
+	assert.equal(searchableTui.hasFocusedOverlay(), true);
+	harness.writes.length = 0;
+	harness.input(copyInput);
+	await flushAsyncWork();
+	sideTui.renderNow(true);
+	assert.equal(copyCalls, 0);
+	assert.match(stripVTControlCharacters(harness.writes.join("")), />\s+x/u);
 	closeSide();
 	assert.equal(await running, "closed");
 });
