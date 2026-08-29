@@ -30,6 +30,7 @@ type BtwCustomFactory<T> = (
 type BtwFullscreenTui = TUI & {
 	flash?: (message: string, durationMs?: number) => void;
 	setLayoutRoot(component: Component | undefined): void;
+	addInputListenerBeforeAll?(listener: TuiInputListener): () => void;
 	addInputListenerBeforeViewport?(listener: TuiInputListener): () => void;
 };
 
@@ -135,6 +136,7 @@ export async function runBtwFullscreen<T>(
 }
 
 type BtwInputListeners = {
+	beforeAll: Set<TuiInputListener>;
 	beforeViewport: Set<TuiInputListener>;
 	regular: Set<TuiInputListener>;
 };
@@ -143,7 +145,7 @@ const btwInputListeners = new WeakMap<BtwTuiAltScreen, BtwInputListeners>();
 
 function dispatchBtwInput(listeners: BtwInputListeners, data: string): TuiInputListenerResult {
 	let current = data;
-	for (const group of [listeners.beforeViewport, listeners.regular]) {
+	for (const group of [listeners.beforeAll, listeners.beforeViewport, listeners.regular]) {
 		for (const listener of group) {
 			const result = listener(current);
 			if (result?.consume) return result;
@@ -162,6 +164,7 @@ class BtwTuiAltScreen extends TuiAltScreen {
 		let listeners = btwInputListeners.get(this);
 		if (!listeners) {
 			const registeredListeners: BtwInputListeners = {
+				beforeAll: new Set(),
 				beforeViewport: new Set(),
 				regular: new Set(),
 			};
@@ -171,6 +174,13 @@ class BtwTuiAltScreen extends TuiAltScreen {
 		}
 		listeners.regular.add(listener);
 		return () => listeners.regular.delete(listener);
+	}
+
+	addInputListenerBeforeAll(listener: TuiInputListener): () => void {
+		const listeners = btwInputListeners.get(this);
+		if (!listeners) return super.addInputListener(listener);
+		listeners.beforeAll.add(listener);
+		return () => listeners.beforeAll.delete(listener);
 	}
 
 	addInputListenerBeforeViewport(listener: TuiInputListener): () => void {
@@ -186,6 +196,7 @@ class BtwTuiAltScreen extends TuiAltScreen {
 			super.removeInputListener(listener);
 			return;
 		}
+		listeners.beforeAll.delete(listener);
 		listeners.beforeViewport.delete(listener);
 		listeners.regular.delete(listener);
 	}
@@ -239,7 +250,7 @@ function createBtwFullscreenTui(
 	);
 	if (!copyOnSelect) {
 		let isInBracketedPaste = false;
-		fullscreen.addInputListener((data) => {
+		fullscreen.addInputListenerBeforeViewport((data) => {
 			const wasInBracketedPaste = isInBracketedPaste;
 			const startsBracketedPaste = data.includes(BRACKETED_PASTE_START);
 			if (startsBracketedPaste) isInBracketedPaste = true;
@@ -337,6 +348,7 @@ class BtwFullscreenHost<T> implements Component {
 			this.fullscreen.start();
 			// Waiting for the custom promise would leave follow-up keys bound to the side TUI.
 			const addHardCancelListener =
+				this.fullscreen.addInputListenerBeforeAll?.bind(this.fullscreen) ??
 				this.fullscreen.addInputListenerBeforeViewport?.bind(this.fullscreen) ??
 				this.fullscreen.addInputListener.bind(this.fullscreen);
 			this.removeHardCancelListener = addHardCancelListener((data) => {

@@ -28,7 +28,7 @@ const BTW_TEST_KEYBINDINGS = {
 	},
 } as const;
 
-type BtwTestCopyBinding = "ctrl+c" | "ctrl+x" | "ctrl+y" | "x";
+type BtwTestCopyBinding = "ctrl+c" | "ctrl+x" | "ctrl+y" | "pageUp" | "x";
 
 function createBtwTestKeybindings(copyBinding: BtwTestCopyBinding = "ctrl+y"): KeybindingsManager {
 	return new KeybindingsManager(BTW_TEST_KEYBINDINGS, {
@@ -39,6 +39,7 @@ function createBtwTestKeybindings(copyBinding: BtwTestCopyBinding = "ctrl+y"): K
 function inputForCopyBinding(keybindings: KeybindingsManager): string {
 	const [binding] = keybindings.getKeys("app.message.copy");
 	assert.ok(binding);
+	if (binding === "pageUp") return "\u001b[5~";
 	if (binding.length === 1) return binding;
 	assert.match(binding, /^ctrl\+[a-z]$/u);
 	return String.fromCharCode(binding.charCodeAt("ctrl+".length) & 31);
@@ -656,6 +657,22 @@ test("manual fullscreen retains a selection and copies it through a non-default 
 	sideTui.renderNow(true);
 	assert.deepEqual(copied, ["copy me"]);
 	assert.equal(harness.writes.join("").includes("Copied!"), true);
+	closeSide();
+	assert.equal(await running, "closed");
+});
+
+test("manual fullscreen prioritizes its copy binding over a conflicting viewport shortcut", async () => {
+	let copyCalls = 0;
+	const { harness, running, closeSide, copyInput } = await startClipboardSelection(
+		async () => {
+			copyCalls += 1;
+		},
+		{ copyOnSelect: false, copyBinding: "pageUp" },
+	);
+
+	harness.input(copyInput);
+	await flushAsyncWork();
+	assert.equal(copyCalls, 1);
 	closeSide();
 	assert.equal(await running, "closed");
 });
