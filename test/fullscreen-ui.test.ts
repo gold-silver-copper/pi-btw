@@ -10,6 +10,7 @@ import {
 	type Terminal,
 	type TUI,
 	TUI_KEYBINDINGS,
+	TuiAltScreen,
 	TuiMainScreen,
 } from "@earendil-works/pi-tui";
 import { test } from "vitest";
@@ -45,7 +46,15 @@ function inputForCopyBinding(keybindings: KeybindingsManager): string {
 	return String.fromCharCode(binding.charCodeAt("ctrl+".length) & 31);
 }
 
-function createHarness(options: { fullscreenStopError?: Error; layoutMountError?: Error } = {}) {
+function createHarness(
+	options: {
+		fullscreenStopError?: Error;
+		hardCancelRemoveError?: Error;
+		layoutMountError?: Error;
+		parentOverlayHideError?: Error;
+		parentStartError?: Error;
+	} = {},
+) {
 	const events: string[] = [];
 	let outerComponent: FakeComponent | undefined;
 	let outerDone: ((value: unknown) => void) | undefined;
@@ -57,11 +66,15 @@ function createHarness(options: { fullscreenStopError?: Error; layoutMountError?
 		stop: (options?: { preserveScreen?: boolean }) => {
 			events.push(`parent.stop:${String(options?.preserveScreen)}`);
 		},
-		start: () => events.push("parent.start"),
+		start: () => {
+			events.push("parent.start");
+			if (options.parentStartError) throw options.parentStartError;
+		},
 		renderNow: (force?: boolean) => events.push(`parent.renderNow:${String(force)}`),
 		requestRender: (force?: boolean) => events.push(`parent.render:${String(force)}`),
 	} as unknown as TUI;
 	let active: Component | undefined;
+	let fullscreenInputListener: ((data: string) => unknown) | undefined;
 	const fullscreen = {
 		mode: "fullscreen",
 		terminal: parent.terminal,
@@ -96,8 +109,12 @@ function createHarness(options: { fullscreenStopError?: Error; layoutMountError?
 		requestRender() {
 			events.push("fullscreen.render");
 		},
-		addInputListener() {
-			return () => {};
+		addInputListener(listener: (data: string) => unknown) {
+			fullscreenInputListener = listener;
+			return () => {
+				if (fullscreenInputListener === listener) fullscreenInputListener = undefined;
+				if (options.hardCancelRemoveError) throw options.hardCancelRemoveError;
+			};
 		},
 		showOverlay() {
 			throw new Error("overlay was not expected");
@@ -110,7 +127,12 @@ function createHarness(options: { fullscreenStopError?: Error; layoutMountError?
 	const notifications: string[] = [];
 	const ctx = {
 		ui: {
-			custom: async (factory: (...args: never[]) => FakeComponent) => {
+			custom: async (
+				factory: (...args: never[]) => FakeComponent,
+				customOptions?: {
+					onHandle?: (handle: { setHidden(hidden: boolean): void }) => void;
+				},
+			) => {
 				const savedEditorText = editorText;
 				const result = new Promise<unknown>((resolve) => {
 					outerDone = resolve;
@@ -124,6 +146,11 @@ function createHarness(options: { fullscreenStopError?: Error; layoutMountError?
 					{} as never,
 					((value: unknown) => outerDone?.(value)) as never,
 				);
+				customOptions?.onHandle?.({
+					setHidden() {
+						if (options.parentOverlayHideError) throw options.parentOverlayHideError;
+					},
+				});
 				const value = await result;
 				editorText = savedEditorText;
 				return value;
@@ -148,6 +175,10 @@ function createHarness(options: { fullscreenStopError?: Error; layoutMountError?
 		get editorText() {
 			return editorText;
 		},
+		input(data: string) {
+			assert.ok(fullscreenInputListener);
+			fullscreenInputListener(data);
+		},
 	};
 }
 
@@ -170,22 +201,50 @@ class InputHandoffTerminal implements Terminal {
 	readonly columns = 80;
 	readonly rows = 12;
 	readonly kittyProtocolActive = false;
+	readonly lifecycle: Array<"start" | "stop"> = [];
+	readonly lifecycleDuringInput: Array<"start" | "stop"> = [];
+	readonly outputDuringInput: string[] = [];
 	private inputHandler: ((data: string) => void) | undefined;
+	private inputDispatchDepth = 0;
+	private nextStopError: Error | undefined;
 
 	start(onInput: (data: string) => void): void {
+		this.recordLifecycle("start");
 		this.inputHandler = onInput;
 	}
 
 	stop(): void {
+		this.recordLifecycle("stop");
 		this.inputHandler = undefined;
+		const error = this.nextStopError;
+		this.nextStopError = undefined;
+		if (error) throw error;
+	}
+
+	failNextStop(error: Error): void {
+		this.nextStopError = error;
 	}
 
 	send(data: string): void {
-		this.inputHandler?.(data);
+		const handler = this.inputHandler;
+		if (!handler) return;
+		this.inputDispatchDepth += 1;
+		try {
+			handler(data);
+		} finally {
+			this.inputDispatchDepth -= 1;
+		}
+	}
+
+	private recordLifecycle(event: "start" | "stop"): void {
+		this.lifecycle.push(event);
+		if (this.inputDispatchDepth > 0) this.lifecycleDuringInput.push(event);
 	}
 
 	async drainInput(): Promise<void> {}
-	write(): void {}
+	write(data: string): void {
+		if (this.inputDispatchDepth > 0) this.outputDuringInput.push(data);
+	}
 	moveBy(): void {}
 	hideCursor(): void {}
 	showCursor(): void {}
@@ -211,15 +270,28 @@ class MainInput implements Component, Focusable {
 	invalidate(): void {}
 }
 
-function createInputHandoffHarness(keybindings = createBtwTestKeybindings()) {
+function createInputHandoffHarness(
+	keybindings = createBtwTestKeybindings(),
+	options: { editorText?: string; fullscreenParent?: boolean } = {},
+) {
 	const terminal = new InputHandoffTerminal();
-	const parent = new TuiMainScreen(terminal, false);
+	const parent = options.fullscreenParent
+		? new TuiAltScreen(terminal, false)
+		: new TuiMainScreen(terminal, false);
 	const editorContainer = new Container();
 	const mainInput = new MainInput();
+	mainInput.text = options.editorText ?? "";
+	if (options.fullscreenParent) {
+		parent.addChild({
+			render: () => Array.from({ length: 80 }, (_, index) => `history ${index + 1}`),
+			invalidate() {},
+		});
+	}
 	editorContainer.addChild(mainInput);
 	parent.addChild(editorContainer);
 	parent.setFocus(mainInput);
 	parent.start();
+	if (options.fullscreenParent) parent.renderNow(true);
 
 	const ctx = {
 		ui: {
@@ -394,6 +466,152 @@ async function startClipboardSelection(
 	};
 }
 
+test("Ctrl+C restores a fullscreen parent only after input dispatch unwinds", async () => {
+	const harness = createInputHandoffHarness(createBtwTestKeybindings(), {
+		editorText: "main draft",
+		fullscreenParent: true,
+	});
+	const existingOverlay = harness.parent.showOverlay(
+		{
+			render: () => ["existing overlay"],
+			invalidate() {},
+		},
+		{ nonCapturing: true },
+	);
+	let sideCancelCount = 0;
+	try {
+		const running = runBtwFullscreen(harness.ctx, (ctx) =>
+			ctx.ui.custom<"closed">((_tui, _theme, _keybindings, done) => ({
+				focused: false,
+				render: () => ["side thread"],
+				handleInput(data: string) {
+					if (data !== "\u0003") return;
+					sideCancelCount += 1;
+					done("closed");
+				},
+				invalidate() {},
+			})),
+		);
+		await flushAsyncWork();
+		const lifecycleBeforeCancel = harness.terminal.lifecycle.length;
+
+		harness.terminal.send("\u0003");
+		harness.terminal.send("\u0003");
+
+		assert.equal(sideCancelCount, 1);
+		assert.deepEqual(harness.terminal.lifecycleDuringInput, []);
+		assert.deepEqual(harness.terminal.outputDuringInput, []);
+		assert.equal(harness.terminal.lifecycle.length, lifecycleBeforeCancel);
+
+		await Promise.resolve();
+		assert.equal(await running, "closed");
+		harness.terminal.send("x");
+		assert.equal(harness.mainInput.text, "main draftx");
+		assert.equal(existingOverlay.isHidden(), false);
+		assert.equal(harness.parent.hasOverlay(), true);
+		assert.deepEqual(harness.terminal.lifecycle.slice(lifecycleBeforeCancel), ["stop", "start"]);
+
+		const parent = harness.parent as TuiAltScreen;
+		parent.renderNow(true);
+		const beforeWheel = parent.viewportTop;
+		assert.ok(beforeWheel > 0);
+		harness.terminal.send("\u001b[<64;1;1M");
+		parent.renderNow(true);
+		assert.ok(parent.viewportTop < beforeWheel);
+	} finally {
+		existingOverlay.hide();
+		harness.parent.stop();
+	}
+});
+
+test("a deferred hard-cancel stop failure still restores parent input once", async () => {
+	const harness = createInputHandoffHarness();
+	const running = runBtwFullscreen(harness.ctx, (ctx) =>
+		ctx.ui.custom<"closed">((_tui, _theme, _keybindings, done) => ({
+			focused: false,
+			render: () => ["side thread"],
+			handleInput(data: string) {
+				if (data === "\u0003") done("closed");
+			},
+			invalidate() {},
+		})),
+	);
+	try {
+		await flushAsyncWork();
+		const lifecycleBeforeCancel = harness.terminal.lifecycle.length;
+		harness.terminal.failNextStop(new Error("fullscreen stop failed"));
+
+		harness.terminal.send("\u0003");
+
+		assert.deepEqual(harness.terminal.lifecycleDuringInput, []);
+		await assert.rejects(running, /fullscreen stop failed/u);
+		assert.deepEqual(harness.terminal.lifecycle.slice(lifecycleBeforeCancel), ["stop", "start"]);
+		harness.terminal.send("x");
+		assert.equal(harness.mainInput.text, "x");
+	} finally {
+		harness.parent.stop();
+	}
+});
+
+test("deferred restoration preserves the first cleanup error and does not retry parent start", async () => {
+	const harness = createHarness({
+		parentOverlayHideError: new Error("overlay hide failed"),
+		parentStartError: new Error("parent start failed"),
+	});
+	const running = runBtwFullscreen(
+		harness.ctx,
+		(ctx) =>
+			ctx.ui.custom<"closed">((_tui, _theme, _keybindings, done) => ({
+				render: () => ["side thread"],
+				handleInput(data: string) {
+					if (data === "\u0003") done("closed");
+				},
+				invalidate() {},
+				dispose() {
+					harness.events.push("component.dispose");
+				},
+			})),
+		{},
+		{ createTui: harness.createTui },
+	);
+	await flushAsyncWork();
+
+	harness.input("\u0003");
+
+	await assert.rejects(running, /overlay hide failed/u);
+	assert.equal(harness.events.filter((event) => event === "fullscreen.stop:true").length, 1);
+	assert.equal(harness.events.filter((event) => event === "parent.start").length, 1);
+	assert.equal(harness.events.filter((event) => event === "component.dispose").length, 1);
+});
+
+test("deferred listener cleanup failure restores the parent and propagates", async () => {
+	const harness = createHarness({
+		hardCancelRemoveError: new Error("listener cleanup failed"),
+	});
+	const running = runBtwFullscreen(
+		harness.ctx,
+		(ctx) =>
+			ctx.ui.custom<"closed">((_tui, _theme, _keybindings, done) => ({
+				render: () => ["side thread"],
+				handleInput(data: string) {
+					if (data === "\u0003") done("closed");
+				},
+				invalidate() {},
+				dispose() {},
+			})),
+		{},
+		{ createTui: harness.createTui },
+	);
+	await flushAsyncWork();
+
+	harness.input("\u0003");
+
+	await assert.rejects(running, /listener cleanup failed/u);
+	assert.equal(harness.events.filter((event) => event === "fullscreen.stop:true").length, 1);
+	assert.equal(harness.events.filter((event) => event === "parent.start").length, 1);
+	assert.equal(harness.events.filter((event) => event === "parent.renderNow:false").length, 1);
+});
+
 test("Ctrl+C hands input back without closing another parent overlay", async () => {
 	const harness = createInputHandoffHarness();
 	const existingOverlay = harness.parent.showOverlay(
@@ -417,9 +635,10 @@ test("Ctrl+C hands input back without closing another parent overlay", async () 
 		await flushAsyncWork();
 
 		harness.terminal.send("\u0003");
-		harness.terminal.send("x");
+		await Promise.resolve();
 
 		assert.equal(await running, "closed");
+		harness.terminal.send("x");
 		assert.equal(harness.mainInput.text, "x");
 		assert.equal(harness.parent.hasOverlay(), true);
 	} finally {
@@ -460,6 +679,8 @@ test("Ctrl+C cancels the side flow when transcript search owns focus", async () 
 		harness.terminal.send(ctrlShiftF);
 		assert.equal(sideTui.hasOverlay(), true);
 		harness.terminal.send("\u0003");
+		await Promise.resolve();
+		await observed;
 		harness.terminal.send("x");
 		await flushAsyncWork();
 
@@ -511,10 +732,11 @@ test("Ctrl+C hard-cancels the side root before a remapped search close", async (
 		assert.equal(searchableTui.isOverlayFocused(), true);
 
 		harness.terminal.send("\u0003");
-		harness.terminal.send("x");
+		await Promise.resolve();
 
 		assert.equal(sideCancelCount, 1);
 		assert.equal(await running, "closed");
+		harness.terminal.send("x");
 		assert.equal(harness.mainInput.text, "x");
 	} finally {
 		closeSide?.();
@@ -797,7 +1019,7 @@ test("manual fullscreen ignores a release event for the configured copy binding"
 	assert.equal(await running, "closed");
 });
 
-test("Ctrl+C preempts a conflicting manual-copy binding and restores same-batch parent input", async () => {
+test("Ctrl+C preempts a conflicting manual-copy binding and restores next-event parent input", async () => {
 	const keybindings = createBtwTestKeybindings("ctrl+c");
 	const harness = createInputHandoffHarness(keybindings);
 	let sideTui: TUI | undefined;
@@ -832,9 +1054,10 @@ test("Ctrl+C preempts a conflicting manual-copy binding and restores same-batch 
 		assert.equal((sideTui as TUI & { hasActiveSelection(): boolean }).hasActiveSelection(), true);
 
 		harness.terminal.send(inputForCopyBinding(keybindings));
-		harness.terminal.send("x");
+		await Promise.resolve();
 
 		assert.equal(await running, "closed");
+		harness.terminal.send("x");
 		assert.equal(copyCalls, 0);
 		assert.equal(harness.mainInput.text, "x");
 	} finally {

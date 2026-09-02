@@ -300,9 +300,10 @@ class BtwFullscreenHost<T> implements Component {
 	private disposed = false;
 	private finished = false;
 	private parentStopped = false;
-	private parentRestarted = false;
+	private parentRestoreAttempted = false;
 	private fullscreenCreated = false;
 	private fullscreenStopped = false;
+	private parentRestoreQueued = false;
 	private cleanupError: unknown;
 
 	constructor(
@@ -356,7 +357,11 @@ class BtwFullscreenHost<T> implements Component {
 				try {
 					this.hardCancelActiveCustom?.();
 				} finally {
-					this.restoreParent();
+					// ProcessTerminal.stop() destroys its active input buffer. Defer only the
+					// physical handoff so Windows can finish dispatching this Ctrl+C first.
+					// Pi has no public input injection, so do not replay bytes already coalesced
+					// behind the hard-cancel key.
+					this.queueParentRestore();
 				}
 				return { consume: true };
 			});
@@ -376,9 +381,23 @@ class BtwFullscreenHost<T> implements Component {
 		this.done(outcome);
 	}
 
+	private queueParentRestore(): void {
+		if (this.parentRestoreQueued || this.parentRestoreAttempted) return;
+		this.parentRestoreQueued = true;
+		queueMicrotask(() => {
+			this.parentRestoreQueued = false;
+			this.restoreParent();
+		});
+	}
+
 	private restoreParent(): void {
-		this.removeHardCancelListener?.();
+		const removeHardCancelListener = this.removeHardCancelListener;
 		this.removeHardCancelListener = undefined;
+		try {
+			removeHardCancelListener?.();
+		} catch (error) {
+			this.cleanupError ??= error;
+		}
 		if (this.fullscreenCreated && !this.fullscreenStopped) {
 			this.fullscreenStopped = true;
 			try {
@@ -387,7 +406,7 @@ class BtwFullscreenHost<T> implements Component {
 				this.cleanupError ??= error;
 			}
 		}
-		if (!this.parentStopped || this.parentRestarted) return;
+		if (!this.parentStopped || this.parentRestoreAttempted) return;
 		const parentOverlay = this.parentOverlay;
 		this.parentOverlay = undefined;
 		try {
@@ -396,8 +415,8 @@ class BtwFullscreenHost<T> implements Component {
 			this.cleanupError ??= error;
 		}
 		try {
+			this.parentRestoreAttempted = true;
 			this.parent.start();
-			this.parentRestarted = true;
 			this.parent.renderNow(false);
 		} catch (error) {
 			this.cleanupError ??= error;
