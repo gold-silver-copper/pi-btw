@@ -1,5 +1,11 @@
 # @narumitw/pi-btw
 
+## 0.56.1
+
+### Patch Changes
+
+- 612df75: Defer Ctrl+C terminal restoration until input dispatch finishes so Windows fullscreen sessions redraw and scroll correctly.
+
 ## 0.56.0
 
 ### Minor Changes
