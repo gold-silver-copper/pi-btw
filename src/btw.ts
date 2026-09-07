@@ -204,6 +204,13 @@ function formatError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+function readBtwSessionId(ctx: ExtensionCommandContext): string | undefined {
+	const getSessionId = ctx.sessionManager.getSessionId;
+	if (typeof getSessionId !== "function") return undefined;
+	const sessionId = getSessionId.call(ctx.sessionManager);
+	return sessionId.length > 0 ? sessionId : undefined;
+}
+
 function notifySafely(
 	ctx: ExtensionCommandContext,
 	message: string,
@@ -895,6 +902,7 @@ async function askThreadQuestion(
 				auth: selected.auth,
 				signal: view.signal,
 				completeSimple: createModelRegistryCompleteSimple(ctx.modelRegistry),
+				sessionId: readBtwSessionId(ctx),
 			}).then((result) => {
 				if (settled) return;
 				settled = true;

@@ -29,6 +29,7 @@ import {
 } from "../src/btw.js";
 import {
 	buildSideThreadMessages,
+	completeSideQuestion,
 	completeSideThreadTurn,
 	createSideThread,
 	extractAssistantText,
@@ -2879,4 +2880,232 @@ test("answering steering rejects blank questions and bounds unsafe queue display
 	view.dispose();
 	assert.equal(cancelled, 1);
 	assert.equal(view.signal.aborted, true);
+});
+
+test("side thread forwards Pi session headers to OpenCode Go", async () => {
+	const thread = createSideThread("context");
+	let capturedOptions: SimpleStreamOptions | undefined;
+	const model = {
+		provider: "opencode-go",
+		id: "mimo-v2.5",
+		baseUrl: "https://opencode.ai/zen/go/v1",
+	} as Model<Api>;
+	const result = await completeSideThreadTurn({
+		thread,
+		question: "Q",
+		model,
+		auth: { apiKey: "key", headers: { "x-test": "yes" } },
+		thinkingLevel: "off",
+		sessionId: "session-123",
+		completeSimple: async (_model, _context, options) => {
+			capturedOptions = options;
+			return response("A");
+		},
+	});
+	assert.equal(result.kind, "answered");
+	assert.equal(capturedOptions?.apiKey, "key");
+	assert.equal(capturedOptions?.headers?.["x-opencode-session"], "session-123");
+	assert.equal(capturedOptions?.headers?.["x-opencode-client"], "pi");
+	assert.equal(capturedOptions?.headers?.["x-test"], "yes");
+	assert.equal((capturedOptions as { sessionId?: unknown }).sessionId, undefined);
+});
+
+test("side thread forwards Pi session headers to OpenCode Zen for parity", async () => {
+	const thread = createSideThread("context");
+	let capturedOptions: SimpleStreamOptions | undefined;
+	const model = {
+		provider: "opencode",
+		id: "zen-model",
+		baseUrl: "https://opencode.ai/zen/v1",
+	} as Model<Api>;
+	await completeSideThreadTurn({
+		thread,
+		question: "Q",
+		model,
+		auth: { apiKey: "key" },
+		thinkingLevel: "off",
+		sessionId: "session-123",
+		completeSimple: async (_model, _context, options) => {
+			capturedOptions = options;
+			return response("A");
+		},
+	});
+	assert.equal(capturedOptions?.headers?.["x-opencode-session"], "session-123");
+	assert.equal(capturedOptions?.headers?.["x-opencode-client"], "pi");
+});
+
+test("side thread forwards Pi session headers to custom opencode.ai hosts", async () => {
+	const thread = createSideThread("context");
+	let capturedOptions: SimpleStreamOptions | undefined;
+	const model = {
+		provider: "custom",
+		id: "m",
+		baseUrl: "https://opencode.ai/zen/go",
+	} as Model<Api>;
+	await completeSideThreadTurn({
+		thread,
+		question: "Q",
+		model,
+		auth: { apiKey: "key" },
+		thinkingLevel: "off",
+		sessionId: "s",
+		completeSimple: async (_model, _context, options) => {
+			capturedOptions = options;
+			return response("A");
+		},
+	});
+	assert.equal(capturedOptions?.headers?.["x-opencode-session"], "s");
+	assert.equal(capturedOptions?.headers?.["x-opencode-client"], "pi");
+});
+
+test("side thread leaves other providers untouched", async () => {
+	const thread = createSideThread("context");
+	const authHeaders = { "x-test": "yes" };
+	let capturedOptions: SimpleStreamOptions | undefined;
+	const model = {
+		provider: "anthropic",
+		id: "claude",
+		baseUrl: "https://api.anthropic.com",
+	} as Model<Api>;
+	await completeSideThreadTurn({
+		thread,
+		question: "Q",
+		model,
+		auth: { apiKey: "key", headers: authHeaders },
+		thinkingLevel: "off",
+		sessionId: "session-123",
+		completeSimple: async (_model, _context, options) => {
+			capturedOptions = options;
+			return response("A");
+		},
+	});
+	assert.deepEqual(capturedOptions?.headers, { "x-test": "yes" });
+	assert.notEqual(capturedOptions?.headers, authHeaders);
+	assert.deepEqual(authHeaders, { "x-test": "yes" });
+});
+
+test("side thread sends no session headers without a session ID", async () => {
+	for (const sessionId of [undefined, ""] as const) {
+		const thread = createSideThread("context");
+		let capturedOptions: SimpleStreamOptions | undefined;
+		const model = {
+			provider: "opencode-go",
+			id: "mimo-v2.5",
+			baseUrl: "https://opencode.ai/zen/go/v1",
+		} as Model<Api>;
+		await completeSideThreadTurn({
+			thread,
+			question: "Q",
+			model,
+			auth: { apiKey: "key", headers: { "x-test": "yes" } },
+			thinkingLevel: "off",
+			sessionId,
+			completeSimple: async (_model, _context, options) => {
+				capturedOptions = options;
+				return response("A");
+			},
+		});
+		assert.deepEqual(capturedOptions?.headers, { "x-test": "yes" });
+	}
+});
+
+test("side thread still sends session headers for OpenCode provider with unparsable URL", async () => {
+	const thread = createSideThread("context");
+	let capturedOptions: SimpleStreamOptions | undefined;
+	const model = {
+		provider: "opencode-go",
+		id: "mimo-v2.5",
+		baseUrl: "bad-url",
+	} as Model<Api>;
+	await completeSideThreadTurn({
+		thread,
+		question: "Q",
+		model,
+		auth: { apiKey: "key" },
+		thinkingLevel: "off",
+		sessionId: "session-123",
+		completeSimple: async (_model, _context, options) => {
+			capturedOptions = options;
+			return response("A");
+		},
+	});
+	assert.equal(capturedOptions?.headers?.["x-opencode-session"], "session-123");
+	assert.equal(capturedOptions?.headers?.["x-opencode-client"], "pi");
+});
+
+test("side thread keeps explicit auth headers with exact-case win like Pi core", async () => {
+	const thread = createSideThread("context");
+	let capturedOptions: SimpleStreamOptions | undefined;
+	const model = {
+		provider: "opencode-go",
+		id: "mimo-v2.5",
+		baseUrl: "https://opencode.ai/zen/go/v1",
+	} as Model<Api>;
+	await completeSideThreadTurn({
+		thread,
+		question: "Q",
+		model,
+		auth: { apiKey: "key", headers: { "X-Opencode-Session": "explicit" } },
+		thinkingLevel: "off",
+		sessionId: "session-123",
+		completeSimple: async (_model, _context, options) => {
+			capturedOptions = options;
+			return response("A");
+		},
+	});
+	assert.equal(capturedOptions?.headers?.["X-Opencode-Session"], "explicit");
+	// Bug-compatible with Pi core mergeProviderAttributionHeaders (case-sensitive assign):
+	// a differently-cased explicit header coexists with the injected lowercase header.
+	assert.equal(capturedOptions?.headers?.["x-opencode-session"], "session-123");
+	assert.equal(capturedOptions?.headers?.["x-opencode-client"], "pi");
+});
+
+test("side thread lets exact-case explicit auth headers win", async () => {
+	const thread = createSideThread("context");
+	let capturedOptions: SimpleStreamOptions | undefined;
+	const model = {
+		provider: "opencode-go",
+		id: "mimo-v2.5",
+		baseUrl: "https://opencode.ai/zen/go/v1",
+	} as Model<Api>;
+	await completeSideThreadTurn({
+		thread,
+		question: "Q",
+		model,
+		auth: {
+			apiKey: "key",
+			headers: { "x-opencode-session": "explicit", "x-opencode-client": "custom" },
+		},
+		thinkingLevel: "off",
+		sessionId: "session-123",
+		completeSimple: async (_model, _context, options) => {
+			capturedOptions = options;
+			return response("A");
+		},
+	});
+	assert.equal(capturedOptions?.headers?.["x-opencode-session"], "explicit");
+	assert.equal(capturedOptions?.headers?.["x-opencode-client"], "custom");
+});
+
+test("side question forwards Pi session headers without setting options.sessionId", async () => {
+	let capturedOptions: SimpleStreamOptions | undefined;
+	const model = {
+		provider: "opencode-go",
+		id: "mimo-v2.5",
+		baseUrl: "https://opencode.ai/zen/go/v1",
+	} as Model<Api>;
+	await completeSideQuestion({
+		model,
+		question: "Q",
+		conversationContext: "context",
+		thinkingLevel: "off",
+		auth: { apiKey: "key" },
+		sessionId: "session-123",
+		completeSimple: async (_model, _context, options) => {
+			capturedOptions = options;
+			return response("A");
+		},
+	});
+	assert.equal(capturedOptions?.headers?.["x-opencode-session"], "session-123");
+	assert.equal((capturedOptions as { sessionId?: unknown }).sessionId, undefined);
 });

@@ -86,6 +86,7 @@ export interface CompleteSideThreadTurnOptions {
 	auth: SideQuestionAuth;
 	signal?: AbortSignal;
 	completeSimple: CompleteSimpleFunction;
+	sessionId?: string;
 }
 
 export type CompleteSideThreadTurnResult =
@@ -101,13 +102,14 @@ export async function completeSideThreadTurn({
 	auth,
 	signal,
 	completeSimple,
+	sessionId,
 }: CompleteSideThreadTurnOptions): Promise<CompleteSideThreadTurnResult> {
 	if (signal?.aborted) return { kind: "aborted" };
 	try {
 		const response = await completeSimple(
 			model,
 			{ systemPrompt: SYSTEM_PROMPT, messages: buildSideThreadMessages(thread, question) },
-			buildStreamOptions(auth, thinkingLevel, signal),
+			buildStreamOptions(auth, { thinkingLevel, signal, model, sessionId }),
 		);
 		if (signal?.aborted || response?.stopReason === "aborted") return { kind: "aborted" };
 		if (!isAssistantMessage(response)) {
@@ -137,6 +139,7 @@ export interface CompleteSideQuestionOptions {
 	auth: SideQuestionAuth;
 	signal?: AbortSignal;
 	completeSimple: CompleteSimpleFunction;
+	sessionId?: string;
 }
 
 export async function completeSideQuestion({
@@ -147,6 +150,7 @@ export async function completeSideQuestion({
 	auth,
 	signal,
 	completeSimple,
+	sessionId,
 }: CompleteSideQuestionOptions): Promise<AssistantMessage> {
 	return completeSimple(
 		model,
@@ -154,7 +158,7 @@ export async function completeSideQuestion({
 			systemPrompt: SYSTEM_PROMPT,
 			messages: [createUserMessage(buildUserPrompt(question, conversationContext))],
 		},
-		buildStreamOptions(auth, thinkingLevel, signal),
+		buildStreamOptions(auth, { thinkingLevel, signal, model, sessionId }),
 	);
 }
 
@@ -214,14 +218,62 @@ function createUserMessage(text: string): UserMessage {
 	};
 }
 
+// Minimal session-headers fork of Pi core provider-attribution
+// (pinned to @earendil-works/pi-coding-agent@0.85.0 src/core/provider-attribution.ts:getSessionHeaders).
+// Core does not export this helper and extensions have no SettingsManager, so only session
+// headers are mirrored here. Default attribution headers are intentionally out of scope.
+// Keep semantics bug-compatible with core: case-sensitive Object.assign, explicit auth
+// headers win on exact-case match.
+const OPENCODE_HOST = "opencode.ai";
+
+function matchesOpencodeHost(baseUrl: string | undefined): boolean {
+	if (!baseUrl) return false;
+	try {
+		return new URL(baseUrl).hostname === OPENCODE_HOST;
+	} catch {
+		return false;
+	}
+}
+
+function getOpencodeSessionHeaders(
+	model: Pick<Model<Api>, "provider" | "baseUrl">,
+	sessionId?: string,
+): ProviderHeaders | undefined {
+	if (!sessionId) return undefined;
+	if (
+		model.provider !== "opencode" &&
+		model.provider !== "opencode-go" &&
+		!matchesOpencodeHost(model.baseUrl)
+	) {
+		return undefined;
+	}
+	return { "x-opencode-session": sessionId, "x-opencode-client": "pi" };
+}
+
+function mergeSessionHeaders(
+	authHeaders: ProviderHeaders | undefined,
+	sessionHeaders: ProviderHeaders | undefined,
+): ProviderHeaders | undefined {
+	if (!sessionHeaders && !authHeaders) return undefined;
+	// Bug-compatible with core mergeProviderAttributionHeaders: case-sensitive assign.
+	return { ...sessionHeaders, ...authHeaders };
+}
+
+interface BuildSideThreadStreamOptions {
+	thinkingLevel: BtwThinkingLevel;
+	signal?: AbortSignal;
+	model?: Pick<Model<Api>, "provider" | "baseUrl">;
+	sessionId?: string;
+}
+
 function buildStreamOptions(
 	auth: SideQuestionAuth,
-	thinkingLevel: BtwThinkingLevel,
-	signal?: AbortSignal,
+	{ thinkingLevel, signal, model, sessionId }: BuildSideThreadStreamOptions,
 ): SimpleStreamOptions {
+	const sessionHeaders = model ? getOpencodeSessionHeaders(model, sessionId) : undefined;
 	const options: SimpleStreamOptions = {
 		apiKey: auth.apiKey,
-		headers: auth.headers,
+		headers: mergeSessionHeaders(auth.headers, sessionHeaders),
 		env: auth.env,
 		signal,
 	};
