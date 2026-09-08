@@ -1,5 +1,11 @@
 # @narumitw/pi-btw
 
+## 0.57.1
+
+### Patch Changes
+
+- ee07eb8: Forward Pi session headers to OpenCode providers for side-thread requests.
+
 ## 0.57.0
 
 ### Minor Changes
