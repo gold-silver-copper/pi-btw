@@ -8,13 +8,14 @@
  * upstream's 40,000-character context and this package's context at every point. The report
  * goes to $BTW_AUDIT_REPORT (default /tmp/pi-btw-fork/audit.md). Next to it go the system
  * prompt and two questions two minutes apart on the newest session, for
- * test/fixtures/measure-bridge-cache.mjs.
+ * test/fixtures/measure-bridge-cache.mjs. BTW_AUDIT_PROMPT_FILES=0 leaves goals' prompt files out.
  */
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "vitest";
-import { buildSideContext, messageText } from "../src/context.js";
+import { buildSideContext, messageText, objectiveFilePath } from "../src/context.js";
+import { readPromptFile } from "../src/live-facts.js";
 import { SYSTEM_PROMPT } from "../src/side-thread.js";
 
 const SESSIONS = process.env.BTW_AUDIT_SESSIONS ?? join(homedir(), ".pi", "agent", "sessions");
@@ -104,7 +105,7 @@ const median = (values: number[]) => {
 const percentile = (values: number[], p: number) => [...values].sort((first, second) => first - second)[Math.floor((values.length - 1) * p)] ?? 0;
 const minutes = (ms: number) => `${(ms / 60_000).toFixed(1)} min`;
 
-test.runIf(process.env.BTW_AUDIT === "1")("measure the context builder against the newest 30 goal sessions", { timeout: 600_000 }, () => {
+test.runIf(process.env.BTW_AUDIT === "1")("measure the context builder against the newest 30 goal sessions", { timeout: 600_000 }, async () => {
   const rows: Array<Record<string, number | boolean>> = [];
   const files = sessionFiles();
   for (const file of files) {
@@ -116,7 +117,11 @@ test.runIf(process.env.BTW_AUDIT === "1")("measure the context builder against t
       if (!leaf) continue;
       const branch = branchAt(cut, leaf);
       const now = Date.parse(String(leaf.timestamp)) || Date.now();
-      const context = buildSideContext({ branch, question: QUESTION, now });
+      // The prompt file as it is today; the report counts its characters, never its contents.
+      const promptPath = objectiveFilePath(branch);
+      const promptFile = promptPath && process.env.BTW_AUDIT_PROMPT_FILES !== "0" ? await readPromptFile(promptPath, dirname(promptPath)) : undefined;
+      const context = buildSideContext({ branch, question: QUESTION, now, promptFile });
+      const included = /<prompt_file>\n([\s\S]*)\n<\/prompt_file>/u.exec(context)?.[1]?.length ?? 0;
       const old = upstreamContext(branch);
       const goalText = [...branch].reverse().map((entry) => ((entry.data as { goal?: { text?: unknown } })?.goal?.text)).find((text) => typeof text === "string") as string | undefined;
       const firstUser = branch.find((entry) => entry.type === "message" && (entry.message as { role?: string })?.role === "user");
@@ -137,6 +142,9 @@ test.runIf(process.env.BTW_AUDIT === "1")("measure the context builder against t
         newSpan: metrics.span,
         oldSpan: old.span,
         newLength: context.length,
+        hasPromptFile: Boolean(promptPath),
+        promptFileRead: promptFile?.kind === "text",
+        promptFileChars: included,
         oldLength: old.text.length,
       });
     }
@@ -156,6 +164,8 @@ test.runIf(process.env.BTW_AUDIT === "1")("measure the context builder against t
     `| Time span of recent activity (median / p10) | ${minutes(median(numbers("oldSpan")))} / ${minutes(percentile(numbers("oldSpan"), 0.1))} | ${minutes(median(numbers("newSpan")))} / ${minutes(percentile(numbers("newSpan"), 0.1))} |`,
     `| Largest context (characters) | ${Math.max(...numbers("oldLength"))} | ${Math.max(...numbers("newLength"))} |`,
     "",
+    `Points whose goal has a prompt file: ${count("hasPromptFile")} of ${rows.length}; readable today: ${count("promptFileRead")}; characters of it included (median over those): ${median(rows.filter((row) => row.promptFileRead).map((row) => Number(row.promptFileChars)))}.`,
+    "",
   ].join("\n");
   mkdirSync(dirname(REPORT), { recursive: true });
   writeFileSync(REPORT, report);
@@ -166,8 +176,13 @@ test.runIf(process.env.BTW_AUDIT === "1")("measure the context builder against t
     const now = Date.parse(String(leaf.timestamp)) || Date.now();
     const first = { question: QUESTION, answer: "(the first answer)", at: now + 30_000, model: "m" };
     writeFileSync(join(dirname(REPORT), "system.txt"), SYSTEM_PROMPT);
-    writeFileSync(join(dirname(REPORT), "question-1.txt"), buildSideContext({ branch, question: QUESTION, now }));
-    writeFileSync(join(dirname(REPORT), "question-2.txt"), buildSideContext({ branch, question: "and how long will that take?", turns: [first], now: now + 120_000 }));
+    const promptPath = objectiveFilePath(branch);
+    const promptFile = promptPath ? await readPromptFile(promptPath, dirname(promptPath)) : undefined;
+    writeFileSync(join(dirname(REPORT), "question-1.txt"), buildSideContext({ branch, question: QUESTION, now, promptFile }));
+    writeFileSync(
+      join(dirname(REPORT), "question-2.txt"),
+      buildSideContext({ branch, question: "and how long will that take?", turns: [first], now: now + 120_000, promptFile }),
+    );
   }
   console.log(report);
 });

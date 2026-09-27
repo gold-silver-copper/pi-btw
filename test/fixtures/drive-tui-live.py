@@ -1,8 +1,10 @@
 """Live end-to-end check of /btw in the real pi TUI through claude-bridge (development aid).
 
 Makes live model calls for the main agent and the side questions. Starts a goal whose
-only step is `sleep 75`, asks /btw how close it is and a follow-up while it sleeps, and
-waits for the goal to complete. Uses a fresh agent directory with a copy of
+prompt file says to run `sleep 75; echo done` and then write DONE.txt, asks /btw how close
+it is and "what happens after that?" while it sleeps, and waits for the goal to complete.
+Checks that both side calls ran with effort=low (bridge debug log), that the second answer
+names DONE.txt, and that the goal completes. Uses a fresh agent directory with a copy of
 claude-bridge.json; the bridge and pi-goal load from their installed checkouts
 ($PI_PACKAGES_DIR, default ~/.pi/agent/git/github.com/gold-silver-copper).
 
@@ -20,7 +22,12 @@ for d in (AGENT, WORK, SCREENS):
     shutil.rmtree(d, ignore_errors=True); d.mkdir(parents=True)
 (AGENT / "settings.json").write_text('{"lastChangelogVersion":"0.87.1","theme":"dark"}\n')
 shutil.copy(HOME / ".pi/agent/claude-bridge.json", AGENT / "claude-bridge.json")
-(WORK / "prompt.md").write_text("# Wait task\n\nRun exactly one bash command: `sleep 75; echo done`. When it finishes, call goal_complete with a one-line summary. Do nothing else.\n")
+(WORK / "prompt.md").write_text(
+    "# Wait task\n\n"
+    "1. Run exactly one bash command: `sleep 75; echo done`.\n"
+    "2. Then write DONE.txt containing that command's output.\n"
+    "3. Then call goal_complete with a one-line summary. Do nothing else.\n"
+)
 g = ["git", "-c", "user.name=Test", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main"]
 subprocess.run(g + ["init", "-q"], cwd=WORK, check=True); subprocess.run(g + ["add", "."], cwd=WORK, check=True); subprocess.run(g + ["commit", "-qm", "Add the wait task"], cwd=WORK, check=True)
 COLS, ROWS = 140, 45
@@ -55,16 +62,30 @@ def type_line(s):
 pump(5); snap("started")
 type_line("/goal execute prompt.md")
 wait_for("sleep 75", 120); pump(5); snap("sleeping")
+checks = []
+def check(name, ok):
+    checks.append((name, bool(ok))); print(f"CHECK {'ok  ' if ok else 'FAIL'} {name}"); sys.stdout.flush()
 t0 = time.time()
 type_line("/btw how close are you to being done?")
 wait_for("btw ·", 20); pump(2); snap("btw-open")
-wait_for("Enter send", 120); print("first answer seconds", round(time.time() - t0, 1)); pump(1); snap("answer-1")
+wait_for("Enter send", 120); first = round(time.time() - t0, 1); pump(1); snap("answer-1")
 t1 = time.time()
 type_line("and what happens after that?")
-pump(2); wait_for("Enter send", 120); print("second answer seconds", round(time.time() - t1, 1)); pump(1); snap("answer-2")
+pump(2); wait_for("Enter send", 120); second = round(time.time() - t1, 1); pump(1); snap("answer-2")
+check("the answer to the follow-up names DONE.txt", "DONE.txt" in text().split("and what happens after that?")[-1])
 os.write(fd, b"\x03"); pump(2)
-wait_for("Goal complete", 180); pump(3); snap("goal-complete")
+wait_for("Goal complete", 240); pump(3); snap("goal-complete")
+check("the goal completed", "Goal complete" in text())
+check("DONE.txt was written", (WORK / "DONE.txt").exists())
 os.write(fd, b"\x03"); pump(0.5); os.write(fd, b"\x04"); pump(1)
 try: os.kill(pid, 9)
 except Exception: pass
-print("LIVE DRIVER DONE")
+log = (ROOT / "bridge.log").read_text() if (ROOT / "bridge.log").exists() else ""
+spawns = [line for line in log.splitlines() if "side call: spawn" in line]
+check("both side calls ran with effort=low", len(spawns) == 2 and all("effort=low" in line for line in spawns))
+lines = "\n".join(spawns) + f"\nfirst answer {first}s, second answer {second}s\n"
+(ROOT / "summary.txt").write_text(lines + "\n".join(f"{'ok  ' if ok else 'FAIL'} {name}" for name, ok in checks) + "\n")
+print(lines)
+failed = [name for name, ok in checks if not ok]
+print(f"LIVE DRIVER {'OK' if not failed else 'FAILED: ' + ', '.join(failed)}: {ROOT}")
+sys.exit(1 if failed else 0)

@@ -5,7 +5,8 @@ Drives pi in a pty with pi-goal and the scripted offline provider
 and side requests take the script's steps in order) and renders the screen with pyte:
 
   /goal execute prompt.md -> progress note + a bash that prints test results -> sleep 60
-  -> /btw how close are you to being done? -> check the side request's context
+  -> /btw how close are you to being done? -> check the side request's context,
+     including the prompt file's contents
   -> type "push now", Ctrl+N, Enter -> the main agent gets it as a steer
   -> /btw, Ctrl+R -> the answer is in the main editor
   -> /reload, /btw -> the thread is still there.
@@ -145,6 +146,7 @@ prompt = side_prompt(context)
 check("side request is one tool-less user message", not context.get("tools") and [m.get("role") for m in context["messages"]] == ["system", "user"])
 check("side request has its own system prompt", "supervising a coding agent" in json.dumps(context))
 check("context has the objective", "execute prompt.md" in prompt)
+check("context has the prompt file's contents", "<prompt_file>\n# Parser\n\nPort the parser, make the tests pass, then push.\n" in prompt)
 check("context has the progress note", "Parser ported; running the test suite next." in prompt)
 check("context has the running sleep", "bash `sleep 60` running for" in prompt)
 check("context has the test result key lines", "test result: FAILED. 2 passed; 1 failed" in prompt and "parser::fuzz ... FAILED" in prompt and "exit 101" in prompt)
