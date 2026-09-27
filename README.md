@@ -1,208 +1,143 @@
-# 💬 pi-btw — Ask Side Questions Without Derailing the Main Task
+# pi-btw
 
-[![npm](https://img.shields.io/npm/v/@narumitw/pi-btw)](https://www.npmjs.com/package/@narumitw/pi-btw) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+A pi extension for side questions about a running agent: `/btw how close are you to being done?` answers in a side thread and adds nothing to the main conversation unless you bring it back.
 
-Ask questions in a temporary side thread without adding them to the main Pi conversation.
-Only context you explicitly bring back is loaded into the main editor.
+Forked from [`@narumitw/pi-btw`](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-btw) 0.61.1 (`github.com/narumiruna/pi-extensions`, `packages/pi-btw`, commit `9058c15011ed250e69b89dbd680d785a82deb87d`, MIT). See [What changed from upstream](#what-changed-from-upstream).
 
-## ✨ Features
-
-- Starts a side thread immediately with `/btw <question>` or opens the manager with `/btw`.
-- Uses any persisted main-session branch as context without switching branches.
-- Supports scrollable answers, transcript search, a clickable jump-to-latest control, follow-up questions, queued steering, and in-memory resume.
-- Offers fullscreen, side-thread-left, and side-thread-right workspaces with Pi's live main-thread view, click-to-focus input, and a draggable remembered divider.
-- Renders supported Mermaid fences as width-safe, themed Unicode diagrams without a browser or network request.
-- Keeps side questions and answers out of the main conversation by default.
-- Brings back the latest answer, a question suffix, an exact range, or the complete thread only when requested.
-- Uses Pi's current model and thinking level or saved pi-btw choices.
-- Offers BTW-only exit, thinking-cycle, and bring-to-main keybindings.
-
-## 📦 Install
+## Install
 
 ```bash
-pi install npm:@narumitw/pi-btw
+pi remove npm:@narumitw/pi-btw        # if installed: two /btw commands would clash
+pi install git:github.com/gold-silver-copper/pi-btw
 ```
 
-Try without installing permanently:
+pi loads `src/index.ts` directly; there is no build step.
 
-```bash
-pi -e npm:@narumitw/pi-btw
-```
+## Using it
 
-Build and try this package locally from the repository root:
-
-```bash
-npm --workspace @narumitw/pi-btw run build
-pi -e ./packages/pi-btw
-```
-
-The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
-Pi extensions run with the Pi process's user permissions, so install only trusted packages.
-
-## 🚀 Quick start
-
-In TUI mode, run `/btw <question>` to start immediately or `/btw` to choose context and settings first.
-The side thread stays separate until you explicitly bring context to the main editor.
-
-## 💬 Commands
-
-| Command | Purpose |
+| Command | What it does |
 | --- | --- |
-| `/btw` | Choose context, start or resume a side thread, or change settings. |
-| `/btw <question>` | Start a new side thread immediately with the supplied question. |
+| `/btw <question>` | Open the side thread and ask. |
+| `/btw` | Reopen the side thread with an empty composer. |
+| `/btw new <question>`, `/btw new` | Clear the thread first. |
 
-Both routes require TUI mode and a model with usable credentials; see [Settings](#-settings).
-Side questions and selected conversation context are sent to that model's provider.
-Bringing context back fills the main editor without submitting; replacing an existing draft requires confirmation.
-Ctrl+C cancels the response and discards the current draft and queued questions, but completed exchanges remain resumable in memory.
-Read the [workflow guide](./docs/workflows.md) for context selection, copying, search, steering, and draft recovery; `/new`, `/resume`, `/reload`, and restart discard retained threads.
+`/btw` works in the TUI only; other modes say so and do nothing. It opens a fullscreen workspace: the thread's questions and answers above a composer. The header shows the side model and thinking level.
 
-## ⚙️ Settings
+Each question is a separate, tool-less model call with its own system prompt and its own routing session id. With `claude-bridge` it runs as a one-shot Claude Code process, which counts against the same usage limit as the main agent.
 
-By default, `/btw` uses the current session model.
-Open `/btw` → **Settings** → **Model** to choose an available model or **Same as main thread** to remove the override.
-The searchable picker follows the current Pi model scope and saves immediately without changing the main session model.
-A manually configured available model outside that scope remains active and visible until you explicitly choose another option.
+## Keys
 
-You can also edit the user settings file directly:
+| Key | Action |
+| --- | --- |
+| `Enter` | Send the question. Ignored while an answer is pending: wait, or cancel. |
+| `Ctrl+R` | Bring back: close the side thread and add the latest question and answer to the main editor. |
+| `Ctrl+N` | Steer the main agent (below). |
+| pi's thinking-cycle key (`Shift+Tab` by default) | Raise or lower this thread's thinking level. |
+| `Ctrl+C` | Cancel a pending answer and close the side thread. |
+| `PgUp` / `PgDn`, mouse wheel, `End` | Scroll; jump back to the latest answer. |
+
+Selecting text with the mouse copies it. The keys are fixed; `Ctrl+N` is used by neither pi's editor nor terminal flow control (`Ctrl+S`/`Ctrl+Q`).
+
+**Bring back** adds this block to the main editor, after any draft you have (it never replaces one), and reports "Brought back the latest answer (N lines)". Nothing is sent.
 
 ```text
-$PI_CODING_AGENT_DIR/pi-btw.json
+The following context was brought back from a /btw side discussion.
+Treat it as discussion context, not as work already completed.
+
+<btw_context>
+User:
+…
+Assistant:
+…
+</btw_context>
 ```
 
-The normal location is `~/.pi/agent/pi-btw.json`.
-`PI_CODING_AGENT_DIR` is an existing Pi setting; pi-btw does not add any environment variables.
+**Steer** closes the side thread and opens pi's editor with the composer's draft, or the latest answer when the composer is empty. Confirm, and the text goes to the main agent: as a steer while it is running, as a normal message when it is idle. Cancel, and you are back in the side thread with the draft. pi-goal treats a message sent this way as extension input: it wakes a waiting goal, but it cannot resume a paused one (type "continue" yourself for that).
+
+## What the side model sees
+
+pi-btw builds the context again for every question, so a follow-up such as "and now?" sees the current state. The request is one user message with these sections, in this order, and the question last:
+
+1. **Objective.** With pi-goal: the objective, its status and pause reason, the prompt file path, the active time and the last five progress notes with their ages. Without it: the first user message. Up to 4,000 characters.
+2. **Earlier work.** The latest compaction summary, up to 8,000 characters.
+3. **Earlier side questions.** This thread's questions and answers, oldest first, newest kept within 15,000 characters.
+4. **Main agent now.** Running or idle, the tool running now and for how long (for example ``bash `cargo test --workspace` running for 23m``), the time since its last activity, and whether a goal is waiting and on what.
+5. **Recent activity.** A timeline with wall-clock times, newest last: user messages, the agent's prose and the tail of its reasoning, and one line per tool call with its result paired to it (ok or error, the exit code for `bash`, the duration, and up to eight key lines such as test summaries and errors). Tool calls never include file contents: `write` shows the path and size, `edit` the path and the number of edits.
+6. **Live repository facts** (below).
+
+The whole request stays under 60,000 characters. Sections 1, 2, 4 and 6 have their own caps and are always kept; the timeline gets what remains.
+
+The side model is told the sections were collected just now, to answer progress questions from the objective, the notes, the current tool and recent results and say what remains, to say when something can't be told from the context, and never to claim it ran anything.
+
+### Live repository facts
+
+When you send a question, pi-btw runs a few read-only commands (git 3 s, `gh` 6 s, all in parallel) and shows "collecting repository facts…" meanwhile. For the session's working directory and, when different, the repository the main agent most recently worked in (the newest `cd` target or absolute path in its tool calls; at most two repositories):
+
+- `git status -sb` (first 20 lines) and `git log --oneline -5`
+- whether a rebase, merge, cherry-pick or revert is in progress
+- the current branch's pull request: `PR #2502 "…" open, checks: 14 passed, 1 failed (clippy), 2 pending`
+
+Results are reused for 20 seconds within a thread. Anything that fails (not a git repository, no `gh`, no pull request) is skipped silently. These are not model tools: the side call stays tool-less.
+
+## The session thread
+
+Each session has one side thread. After every answered or failed question pi-btw appends the thread as a `btw-thread` custom entry: the newest 30 turns, each answer capped at 20,000 characters. Custom entries never reach the main model. The thread is restored when the session starts, so it survives `/reload` and restarts. `/btw new` clears it. The thinking level you pick in a thread lasts until `/btw new` or `/reload`.
+
+## Settings
+
+`~/.pi/agent/pi-btw.json` (or `$PI_CODING_AGENT_DIR/pi-btw.json`), read on every `/btw`. pi-btw never writes it. All keys are optional:
 
 ```json
-{
-  "model": "anthropic/claude-sonnet-4-5",
-  "thinkingLevel": "low",
-  "rememberThinkingLevelChanges": true,
-  "fullscreenCopyOnSelect": true,
-  "layout": "left-pane",
-  "sidePaneRatio": 0.5
-}
+{ "model": "provider/model-id", "thinkingLevel": "low", "liveFacts": true }
 ```
 
-The `model` value uses `provider/model-id` format.
-Only the first `/` is the separator, so model IDs may contain additional slashes, such as `openrouter/anthropic/claude-sonnet`.
-The configured model must exist in Pi's model registry and have usable credentials.
-If it is missing or unauthenticated, pi-btw warns and falls back to the current session model.
-If neither model is available, `/btw` reports an error and stops.
-This selection affects only `/btw`; it does not change the main session model.
-Model changes apply when the next new or resumed side thread starts.
-
-Pi calls its reasoning setting the **thinking level**.
-In Settings, choose **Same as main thread** to start each new side thread from the main thread's current thinking level.
-This is stored by omitting `thinkingLevel` from `pi-btw.json`.
-
-Set `thinkingLevel` only when you want a fixed pi-btw starting level.
-Accepted fixed values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
-The initial value and shortcut cycle are clamped to the selected side model's capabilities using Pi's model rules.
-Resumed side threads keep their own local thinking level instead of re-syncing with the main thread.
-Pi-btw does not read, write, or change the main session's `defaultThinkingLevel`.
-
-`rememberThinkingLevelChanges` controls only persistence for fixed thinking levels and defaults to `true` when omitted.
-A side-thread shortcut always changes that side thread immediately.
-When a fixed thinking level is selected and remembering is on, the concrete level is written for the next invocation; when off, `pi-btw.json` stays unchanged.
-When **Same as main thread** is selected, shortcut changes stay local even when remembering is on.
-If a shortcut write fails, the local change remains active and pi-btw warns that it was not remembered.
-A failed Settings-screen save instead restores the previous displayed value.
-
-`fullscreenCopyOnSelect` controls only pi-btw's dedicated workspace and defaults to `true` when omitted.
-Turn **Copy selection automatically** off to retain highlighted selections and copy them with Pi's effective `app.message.copy` binding.
-Pi-btw does not inherit Pi core's setting of the same name because Pi's public extension API does not expose its effective value.
-
-`layout` controls the dedicated workspace and defaults to `fullscreen` when omitted.
-Accepted values are `fullscreen`, `left-pane`, and `right-pane`.
-The pane names identify the side thread's position; the other pane reuses Pi's native main-thread rendering at pane width and stays current while BTW is open.
-A single muted divider separates the panes; click either pane to move keyboard focus to it.
-Drag the divider with the primary mouse button to resize both panes.
-The side-thread share is limited to 20–80% and saved as `sidePaneRatio` when the button is released, independent of whether the side thread is on the left or right.
-If the save fails, the workspace restores the last saved ratio and reports the error.
-Pi's search and keyboard viewport controls apply to the active pane.
-The mouse wheel scrolls the pane under the pointer without moving keyboard focus, and both panes continue redrawing while either pane is active.
-If you selected context from the main-thread tree, the main pane still shows the active main thread while the side model receives the selected branch.
-Pane layouts collapse to the side thread alone below 80 terminal columns and return keyboard focus to it.
-Choose **Side-thread layout** in Settings; changes apply the next time a new or resumed BTW workspace opens.
-
-### Keybindings
-
-Open `/btw` → **Settings**, select a shortcut row, then choose **Edit key combination…** or **Restore default**.
-Type a key name such as `ctrl+q` or `f6`; this is not a key-recording prompt.
-Changes save immediately and apply when opening or resuming BTW, without `/reload`. Escape cancels an unfinished edit, not earlier saves.
-The literal `/btw settings` remains a side question, not a settings subcommand.
-
-| JSON field under `keybindings` | Default | Action |
+| Key | Default | Meaning |
 | --- | --- | --- |
-| `exit` | `ctrl+c` | Cancel and leave the dedicated side-thread workspace, including its nested dialogs. |
-| `cycleThinkingLevel` | Inherit Pi's `app.thinking.cycle` | Cycle supported levels while composing or generating. |
-| `bringToMain` | `ctrl+r` | Open the bring-to-main chooser after a completed answer. |
+| `model` | the main session's model | The side model, as `provider/model-id` (only the first `/` separates). Falls back to the session's model, with a warning, when it is missing or has no credentials. |
+| `thinkingLevel` | `"low"` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`, clamped to the model; `"main"` uses the main thread's level. |
+| `liveFacts` | `true` | Collect live repository facts. |
 
-For example, merge these overrides into `pi-btw.json`:
+Unknown keys (including upstream's `keybindings`, `layout`, `sidePaneRatio`, `fullscreenCopyOnSelect` and `rememberThinkingLevelChanges`) are ignored with one warning naming them. Invalid values fall back to their defaults with a warning.
 
-```json
-{
-  "keybindings": {
-    "exit": "ctrl+q",
-    "cycleThinkingLevel": "f6",
-    "bringToMain": "f7"
-  }
-}
+pi-btw never changes the main session's model, thinking level, branch or editor draft, except that bring-back adds to the draft.
+
+## Development
+
+```bash
+npm install
+npm run typecheck
+npm test                  # vitest, with the mock pi in test/support/
+npm run fuzz              # fast-check: the context builder, the settings reader, thread restore
+BTW_AUDIT=1 npx vitest run test/audit.test.ts   # measure the builder on your newest 30 goal sessions
+python3 test/fixtures/drive-tui.py /tmp/pi-btw-tui   # offline end-to-end run in the real pi TUI (needs pyte and a pi-goal checkout)
 ```
 
-Each override accepts one Pi key name with optional `ctrl`, `shift`, `alt`, and `super` modifiers; modifier order and letter case do not matter.
-Letters, digits, Pi special keys and symbols are recognized, except the literal `+`, which Pi's matcher cannot parse as a base key.
-Function keys `f1`–`f12` and Escape accept no modifiers; Clear accepts only no modifier, Shift, or Ctrl.
-Actual availability depends on the terminal; `super` and some modified combinations require extended keyboard reporting.
+`test/fixtures/offline-provider.ts` is a scripted offline model for driving pi by hand; the audit test writes its report outside the repository and commits no session content.
 
-New overrides cannot take ordinary typing keys or conflict with BTW actions, Pi editing, selection, search, scrolling, or enabled manual-copy bindings.
-Pi's explicitly configured printable thinking shortcuts remain inherited for compatibility.
-If a saved override becomes conflicting, BTW warns and uses an available default; if none is usable, that shortcut is unavailable and its activation hint is omitted.
-An explicitly unbound Pi thinking action stays unbound. Remove an override field to restore its default; neither saving nor resetting modifies Pi's global keybindings.
-**Ctrl+C always remains available as hard cancel**, even after configuring another exit key. Shortcut handling does not interpret bracketed-paste payloads as commands.
+## What changed from upstream
 
-### Persistence
+- **Context.** Upstream sent the last 40,000 characters of user and assistant messages, frozen when the thread opened, question first. That dropped every tool result, lost the objective at almost every point of a long goal, and was mostly raw tool-call JSON. The new builder is described above. Measured at 120 points of 30 goal sessions (25/50/75/100% of each):
 
-Reading a missing settings file has no side effects.
-Pi-btw creates it only after a Settings change, a remembered shortcut change, or a divider drag.
-Within one Pi process, saves run in order and publish atomically through a same-directory temporary file and rename.
-Saves preserve other recognized settings and unknown fields.
-Malformed or invalid files block saves and remain unchanged.
-Files must be valid UTF-8 and no larger than 64 KiB.
-Separate Pi processes and external editors are outside the in-process ordering boundary.
-The file is read for every `/btw` invocation, so edits apply without `/reload`.
+  | | Upstream 0.61.1 | pi-btw |
+  | --- | --- | --- |
+  | Objective present | 14 of 120 | 120 of 120 |
+  | Tool-call arguments, share of the context (median) | 96% | 24% |
+  | Tool results shown (median per point) | 0 (32 dropped inside the window) | 76 |
+  | Time span of recent activity (median / 10th percentile) | 15 / 4 minutes | 37 / 11 minutes |
+  | Largest context | 40,000 characters | 59,996 characters |
 
-## 🚧 Limitations
+- **New:** live repository facts, steering the main agent, one thread per session that survives `/reload`, and a default thinking level of `low`.
+- **Removed:** the manager and settings menu, the resume picker and multiple threads, "Start from main thread tree…", the side-pane layouts and live main-thread pane, transcript search, Mermaid rendering, the bring-to-main scope chooser, question-suffix scope, exact-range selector and whole-thread option, keybinding overrides and the keybinding editor, queued follow-up questions, every settings write, and the `@narumitw/pi-tui-kit` dependency. Answers render as plain Markdown.
+- pi loads `src/index.ts` directly; the generated `dist/` runtime and its builder are gone.
+- `src/` went from 5,860 lines to about 1,700.
 
-- `/btw` supports TUI mode only.
-- Only the clicked pane receives keyboard input; hovering or scrolling over the other pane does not move focus.
-- Resume state is memory-only and lasts only for the current extension instance.
-- A side thread retains the latest 40,000 characters of main-conversation context and adds a truncation notice when earlier content is omitted.
-- Clipboard access depends on Pi's host helper, the operating system, and the terminal.
-- Malformed, unsupported, or oversized Mermaid diagrams remain readable as fenced source; partial parses also show a warning.
-- Pi versions before 0.85 omit the clickable jump-to-latest control.
+## Known limits
 
-## 🗂️ Package layout
+- Live facts cover git and `gh` only; the side model still can't open files or run commands.
+- The timeline keeps what fits in the budget; on a busy goal that is roughly the last half hour.
+- What the main agent is doing right now (the running tool, when the run started) is tracked from pi's events in memory, so right after `/reload` it is known only from the session.
+- Side calls use the same provider and usage limits as the main agent.
 
-```text
-packages/pi-btw/
-├── src/                               # Authoritative implementation and helpers
-│   ├── index.ts                       # Thin Pi entrypoint
-│   └── btw.ts                         # Side-thread lifecycle and command
-├── dist/                              # Generated Jiti runtime
-├── docs/                              # Side-thread workflows and controls
-├── scripts/build-runtime.mjs          # Runtime builder
-└── test/                              # Behavior and lifecycle coverage
-```
+## License
 
-The generated runtime is built from `src/index.ts` and does not import back into `src`.
-
-## 🔎 Keywords
-
-Pi extension, Pi coding agent, AI coding agent, side question command, agent chat workflow, TypeScript Pi package, npm Pi extension.
-
-## 📄 License
-
-MIT.
-See [`LICENSE`](./LICENSE).
+MIT. See [`LICENSE`](./LICENSE).

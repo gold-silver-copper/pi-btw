@@ -1,7 +1,7 @@
 import { type Api, clampThinkingLevel, getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { appendToDraft, formatBtwBringToMain } from "./bring-to-main.js";
 import { trackMainAgent } from "./activity.js";
+import { appendToDraft, formatBtwBringToMain } from "./bring-to-main.js";
 import { buildSideContext } from "./context.js";
 import { runBtwFullscreen } from "./fullscreen-ui.js";
 import { createBtwShortcuts } from "./keybindings.js";
@@ -84,7 +84,8 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
       const thinkingLevels = getSupportedThinkingLevels(model) as BtwThinkingLevel[];
       const startLevel = settings.thinkingLevel === "main" ? (pi.getThinkingLevel() as BtwThinkingLevel) : settings.thinkingLevel;
       const current: SideThread = thread;
-      current.thinkingLevel = clampThinkingLevel(model, current.thinkingLevel ?? startLevel) as BtwThinkingLevel;
+      // The thread keeps a level only once you change it; until then the settings decide.
+      const thinkingLevel = () => clampThinkingLevel(model, current.thinkingLevel ?? startLevel) as BtwThinkingLevel;
       const completeSimple = createCompleteSimple(ctx.modelRegistry);
 
       // Steering opens pi's editor, which needs pi's screen; cancelling it comes back here.
@@ -116,7 +117,7 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
             return completeSideTurn({
               model,
               prompt,
-              thinkingLevel: current.thinkingLevel ?? "low",
+              thinkingLevel: thinkingLevel(),
               routingSessionId: current.routingSessionId,
               signal,
               completeSimple,
@@ -146,7 +147,7 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
           const view = new BtwWorkspaceView(screen, theme, {
             turns: current.turns,
             model: modelLabel,
-            thinkingLevel: current.thinkingLevel ?? "low",
+            thinkingLevel: thinkingLevel(),
             thinkingLevels,
             shortcuts: createBtwShortcuts(keybindings),
             draft,

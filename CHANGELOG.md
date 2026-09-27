@@ -1,4 +1,20 @@
-# @narumitw/pi-btw
+# pi-btw
+
+## 0.62.0 — fork of @narumitw/pi-btw 0.61.1
+
+Forked from `github.com/narumiruna/pi-extensions`, `packages/pi-btw`, at `9058c15011ed250e69b89dbd680d785a82deb87d`, and reworked after an audit of 61 side questions across 20 sessions.
+
+- The side model gets a new context, rebuilt for every question, with the question last: the objective and pi-goal progress notes, the latest compaction summary, the thread's earlier questions, what the main agent is doing now, a timeline of recent activity with paired tool results, and live repository facts. Up to 60,000 characters; tool calls never include file contents.
+- Live repository facts: read-only `git status`, `git log`, rebase/merge/cherry-pick state and the current PR's checks, for the session's repository and the one the agent last worked in.
+- `Ctrl+N` steers the main agent with the composer's draft or the latest answer.
+- `Ctrl+R` brings the latest question and answer back in one key, appending to any draft.
+- One side thread per session, persisted as a `btw-thread` custom entry and restored after `/reload`; `/btw new` clears it.
+- The thinking level defaults to `low`; the thinking key changes it for the thread only.
+- `pi-btw.json` is read-only and has three keys: `model`, `thinkingLevel` (or `"main"`) and `liveFacts`.
+- Removed: the menu, pickers and multiple threads, the main-thread tree picker, split panes, transcript search, Mermaid, the bring-to-main chooser and range selector, keybinding overrides and editor, queued follow-ups, settings writes and `@narumitw/pi-tui-kit`.
+- pi loads `src/index.ts` directly; the generated `dist/` runtime and its builder are gone.
+
+# @narumitw/pi-btw (upstream history)
 
 ## 0.61.1
 
