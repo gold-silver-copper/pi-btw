@@ -5,6 +5,7 @@ import { trackMainAgent } from "./activity.js";
 import { buildSideContext } from "./context.js";
 import { runBtwFullscreen } from "./fullscreen-ui.js";
 import { createBtwShortcuts } from "./keybindings.js";
+import { type CommandRunner, collectLiveFacts, createCommandRunner, LiveFactsCache, recentDirectories } from "./live-facts.js";
 import { type BtwSettings, type BtwSettingsResult, type BtwThinkingLevel, parseBtwModelReference, readBtwSettings } from "./settings.js";
 import {
   BTW_THREAD_ENTRY_TYPE,
@@ -28,6 +29,7 @@ export interface BtwExtensionDependencies {
   readSettings?: () => Promise<BtwSettingsResult>;
   runFullscreen?: typeof runBtwFullscreen;
   createCompleteSimple?: (modelRegistry: BtwCompletionRegistry) => CompleteSimpleFunction;
+  runCommand?: CommandRunner;
 }
 
 export function createModelRegistryCompleteSimple(modelRegistry: BtwCompletionRegistry): CompleteSimpleFunction {
@@ -41,7 +43,9 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
   const readSettings = dependencies.readSettings ?? (() => readBtwSettings());
   const runFullscreen = dependencies.runFullscreen ?? runBtwFullscreen;
   const createCompleteSimple = dependencies.createCompleteSimple ?? createModelRegistryCompleteSimple;
+  const runCommand = dependencies.runCommand ?? createCommandRunner();
   const activity = trackMainAgent(pi);
+  const liveFacts = new WeakMap<SideThread, LiveFactsCache>();
   let thread = createSideThread();
   const persist = () => pi.appendEntry(BTW_THREAD_ENTRY_TYPE, serializeThread(thread.turns));
 
@@ -87,12 +91,23 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
         let request: AbortController | undefined;
         const answer = async (question: string, signal: AbortSignal) => {
           // Rebuilt for every question, so a follow-up sees the current state.
+          const branch = ctx.sessionManager.getBranch();
+          let facts: string | undefined;
+          if (settings.liveFacts) {
+            const cache = liveFacts.get(current) ?? new LiveFactsCache();
+            liveFacts.set(current, cache);
+            const key = [ctx.cwd, ...recentDirectories(branch)].join("\n");
+            facts = await cache.get(key, Date.now(), () => collectLiveFacts({ cwd: ctx.cwd, branch, run: runCommand }));
+            if (signal.aborted) return { kind: "aborted" as const };
+            view.setStatus("Answering…");
+          }
           const prompt = buildSideContext({
-            branch: ctx.sessionManager.getBranch(),
+            branch,
             question,
             turns: current.turns,
             activity,
             idle: ctx.isIdle(),
+            liveFacts: facts,
           });
           return completeSideTurn({
             model,
@@ -107,7 +122,7 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
         const ask = async (question: string) => {
           request = new AbortController();
           const { signal } = request;
-          view.startAnswer(question);
+          view.startAnswer(question, settings.liveFacts ? "collecting repository facts…" : "Answering…");
           const outcome = await answer(question, signal).catch((error: unknown) => ({
             kind: "error" as const,
             message: error instanceof Error ? error.message : String(error),
