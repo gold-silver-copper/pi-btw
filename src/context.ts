@@ -3,7 +3,10 @@ import type { BtwTurn } from "./side-thread.js";
 
 /** The whole request: context sections plus the question. */
 export const CONTEXT_BUDGET = 60_000;
-const OBJECTIVE_CHARS = 4_000;
+const OBJECTIVE_CHARS = 16_000;
+/** The objective text, status, path and notes keep the room they had before the prompt file. */
+const OBJECTIVE_TEXT_CHARS = 4_000;
+const PROMPT_FILE_CHARS = 12_000;
 const EARLIER_WORK_CHARS = 8_000;
 const SIDE_QUESTIONS_CHARS = 15_000;
 const MAIN_AGENT_CHARS = 2_000;
@@ -21,6 +24,9 @@ const KEY_LINE =
   /test result:|\b\d+ (?:passed|failed|failing|skipped|ignored|errors?)\b|\btests?:?\s+\d+|\berror\b|\bfailed\b|^failures:|\bpanicked\b|warning:/iu;
 const BASH_EXIT = /(?:^|\n)Command exited with code (-?\d+)\s*$/u;
 
+/** A prompt file's contents, or why they are missing, as one line. */
+export type PromptFileRead = { kind: "text"; text: string; sha256: string } | { kind: "unreadable"; reason: string };
+
 export interface SideContextInput {
   /** `ctx.sessionManager.getBranch()`, read again for every question. */
   branch: readonly unknown[];
@@ -32,6 +38,8 @@ export interface SideContextInput {
   idle?: boolean;
   /** Section 6, already formatted. */
   liveFacts?: string;
+  /** The goal's prompt file, read when the question was sent (see `readPromptFile`). */
+  promptFile?: PromptFileRead;
   now?: number;
 }
 
@@ -46,7 +54,7 @@ export function buildSideContext(input: SideContextInput): string {
   const goal = findGoal(branch);
   const compaction = branch.filter((entry) => entry.type === "compaction" && typeof entry.summary === "string").at(-1);
   const before = [
-    section("Objective", objectiveBody(branch, goal), OBJECTIVE_CHARS),
+    section("Objective", objectiveBody(branch, goal, input.promptFile), OBJECTIVE_CHARS),
     compaction ? section("Earlier work", `Compaction summary from ${clock(entryTime(compaction))}:\n${compaction.summary}`, EARLIER_WORK_CHARS) : undefined,
     sideQuestionsSection(input.turns ?? []),
     section("Main agent now", mainAgentBody(branch, goal, input, now), MAIN_AGENT_CHARS),
@@ -89,7 +97,7 @@ function findGoal(branch: readonly Record<string, unknown>[]): GoalState | undef
 }
 
 /** Nothing here depends on the clock; active time and ages are in "Main agent now". */
-function objectiveBody(branch: readonly Record<string, unknown>[], state: GoalState | undefined): string {
+function objectiveBody(branch: readonly Record<string, unknown>[], state: GoalState | undefined, promptFile?: PromptFileRead): string {
   if (!state) {
     const first = branch.find((entry) => entry.type === "message" && isRecord(entry.message) && entry.message.role === "user");
     const text = first ? messageText((first.message as Record<string, unknown>).content) : "";
@@ -102,16 +110,32 @@ function objectiveBody(branch: readonly Record<string, unknown>[], state: GoalSt
     str(goal.stopDetail) ? `detail: ${oneLine(clip(str(goal.stopDetail) ?? "", 300))}` : undefined,
   ].filter(Boolean);
   const head = [status.join(" · ")];
-  const path = isRecord(goal.objectiveFile) ? str(goal.objectiveFile.path) : undefined;
-  if (path) head.push(`Prompt file: ${clip(path, 300)} (its contents are not included)`);
+  const file = isRecord(goal.objectiveFile) ? goal.objectiveFile : undefined;
+  const path = str(file?.path);
+  if (path) {
+    const note = !promptFile ? " (its contents are not included)" : promptFile.kind === "unreadable" ? `: ${oneLine(clip(promptFile.reason, 200))}` : "";
+    head.push(`Prompt file: ${clip(path, 300)}${note}`);
+  }
   const notes = (Array.isArray(goal.progress) ? goal.progress : [])
     .filter((note): note is { at: number; note: string } => isRecord(note) && typeof note.note === "string" && finite(note.at))
     .slice(-PROGRESS_NOTES)
     .map((note) => `- ${clock(note.at)}: ${oneLine(clip(note.note, 300))}`);
   const tail = notes.length > 0 ? ["Progress notes, newest last:", ...notes] : ["No progress notes yet."];
-  const room = OBJECTIVE_CHARS - 40 - [...head, ...tail].join("\n").length;
+  const room = OBJECTIVE_TEXT_CHARS - 40 - [...head, ...tail].join("\n").length;
   const text = state.text?.trim() ? clip(state.text.trim(), Math.max(200, room)) : "(objective text not found)";
-  return [...head, "Objective:", text, ...tail].join("\n");
+  const body = [...head, "Objective:", text, ...tail].join("\n");
+  if (!path || promptFile?.kind !== "text") return body;
+  const changed = typeof file?.sha256 === "string" && file.sha256 !== promptFile.sha256;
+  const opening = `\n\nPrompt file contents, read when this question was asked${changed ? "; the file changed since the goal started" : ""}:\n<prompt_file>\n`;
+  const closing = "\n</prompt_file>";
+  const fileRoom = Math.min(PROMPT_FILE_CHARS, OBJECTIVE_CHARS - 40 - body.length - opening.length - closing.length);
+  return fileRoom > 0 ? `${body}${opening}${clip(promptFile.text, fileRoom)}${closing}` : body;
+}
+
+/** The goal's prompt file path, if the branch's pi-goal state has one. */
+export function objectiveFilePath(branch: readonly unknown[]): string | undefined {
+  const goal = findGoal(branch.filter(isRecord))?.goal;
+  return isRecord(goal?.objectiveFile) ? str(goal.objectiveFile.path) : undefined;
 }
 
 function activeSeconds(goal: Record<string, unknown>, now: number): number {

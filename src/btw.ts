@@ -2,10 +2,17 @@ import { type Api, clampThinkingLevel, getSupportedThinkingLevels, type Model } 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { trackMainAgent } from "./activity.js";
 import { appendToDraft, formatBtwBringToMain } from "./bring-to-main.js";
-import { buildSideContext } from "./context.js";
+import { buildSideContext, objectiveFilePath } from "./context.js";
 import { runBtwFullscreen } from "./fullscreen-ui.js";
 import { createBtwShortcuts } from "./keybindings.js";
-import { type CommandRunner, collectLiveFacts, createCommandRunner, LiveFactsCache, recentDirectories } from "./live-facts.js";
+import {
+  type CommandRunner,
+  collectLiveFacts,
+  createCommandRunner,
+  LiveFactsCache,
+  readPromptFile,
+  recentDirectories,
+} from "./live-facts.js";
 import { type BtwSettings, type BtwSettingsResult, type BtwThinkingLevel, parseBtwModelReference, readBtwSettings } from "./settings.js";
 import {
   BTW_THREAD_ENTRY_TYPE,
@@ -106,6 +113,10 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
               if (signal.aborted) return { kind: "aborted" as const };
               view.setStatus("Answering…");
             }
+            // Read again for every question: prompt files change during long goals.
+            const promptPath = objectiveFilePath(branch);
+            const promptFile = promptPath ? await readPromptFile(promptPath, ctx.cwd) : undefined;
+            if (signal.aborted) return { kind: "aborted" as const };
             const prompt = buildSideContext({
               branch,
               question,
@@ -113,6 +124,7 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
               activity,
               idle: ctx.isIdle(),
               liveFacts: facts,
+              promptFile,
             });
             return completeSideTurn({
               model,

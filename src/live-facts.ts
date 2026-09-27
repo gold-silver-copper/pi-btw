@@ -1,13 +1,16 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { clock } from "./context.js";
+import { clock, type PromptFileRead } from "./context.js";
 
 const GIT_TIMEOUT_MS = 3_000;
 const GH_TIMEOUT_MS = 6_000;
 export const LIVE_FACTS_CACHE_MS = 20_000;
 const MAX_REPOSITORIES = 2;
+const MAX_PROMPT_FILE_BYTES = 1024 * 1024;
 const RECENT_TOOL_CALLS = 30;
 const CANDIDATE_DIRECTORIES = 6;
 const STATUS_LINES = 20;
@@ -183,6 +186,37 @@ function existingDirectory(path: string): string | undefined {
     candidate = parent;
   }
   return undefined;
+}
+
+/**
+ * The goal's prompt file as it is now: only the path pi-goal recorded, only a regular
+ * UTF-8 text file up to 1 MB. Anything else becomes a one-line reason; nothing throws.
+ */
+export async function readPromptFile(path: string, cwd: string): Promise<PromptFileRead> {
+  const absolute = resolve(cwd, path);
+  try {
+    const info = await stat(absolute);
+    if (!info.isFile()) return { kind: "unreadable", reason: "the prompt file is not a regular file" };
+    if (info.size > MAX_PROMPT_FILE_BYTES) return { kind: "unreadable", reason: "the prompt file is larger than 1 MB, so it is not included" };
+    const bytes = await readFile(absolute);
+    if (bytes.byteLength > MAX_PROMPT_FILE_BYTES) return { kind: "unreadable", reason: "the prompt file is larger than 1 MB, so it is not included" };
+    const text = decodeText(bytes);
+    if (text === undefined) return { kind: "unreadable", reason: "the prompt file is not UTF-8 text, so it is not included" };
+    return { kind: "text", text, sha256: createHash("sha256").update(bytes).digest("hex") };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    return { kind: "unreadable", reason: code === "ENOENT" || code === "ENOTDIR" ? "the prompt file no longer exists" : "the prompt file could not be read" };
+  }
+}
+
+/** Strict UTF-8 without NUL bytes, or undefined. */
+function decodeText(bytes: Uint8Array): string | undefined {
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return text.includes("\u0000") ? undefined : text;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Live facts for one thread, reused for 20 seconds. */

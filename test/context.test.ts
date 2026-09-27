@@ -255,3 +255,47 @@ test("pi's tool events show up as the running tool", async () => {
   await harness.emit("tool_execution_end", { toolCallId: "t9", toolName: "bash", isError: false });
   await harness.emit("agent_end", { messages: [] });
 });
+
+test("the goal's prompt file comes after the objective's usual lines, as read", () => {
+  const promptFile = { kind: "text" as const, text: "# Parser\n\n1. Port the parser.\n2. Push.", sha256: "abc" };
+  const branch = [goalStateEntry(goal({ progress: [{ at: minutes(5), note: "ported" }] }), minutes(5))];
+  const context = buildSideContext({ branch, question: "q", promptFile, now: minutes(6) });
+  assert.match(
+    context,
+    /^## Objective\npi-goal status: active\nPrompt file: \/work\/prompt\.md\nObjective:\nexecute prompt\.md\nProgress notes, newest last:\n- 12:05:00: ported\n\nPrompt file contents, read when this question was asked:\n<prompt_file>\n# Parser\n\n1\. Port the parser\.\n2\. Push\.\n<\/prompt_file>\n\n## Main agent now/u,
+  );
+  const changed = buildSideContext({ branch, question: "q", promptFile: { ...promptFile, sha256: "different" }, now: minutes(6) });
+  assert.match(changed, /Prompt file contents, read when this question was asked; the file changed since the goal started:\n<prompt_file>/u);
+});
+
+test("a long prompt file keeps its head and tail within 12,000 characters", () => {
+  const text = `HEAD-MARK\n${"middle line\n".repeat(3_000)}TAIL-MARK`;
+  const context = buildSideContext({ branch: [goalStateEntry(goal(), minutes(0))], question: "q", promptFile: { kind: "text", text, sha256: "abc" } });
+  const block = /<prompt_file>\n([\s\S]*)\n<\/prompt_file>/u.exec(context)?.[1] ?? "";
+  assert.equal(block.length, 12_000);
+  assert.ok(block.startsWith("HEAD-MARK") && block.endsWith("TAIL-MARK"));
+  assert.match(block, /chars cut/u);
+  assert.ok(context.indexOf("## Main agent now") < 16_100);
+});
+
+test("an unreadable prompt file is one line, and without a goal file nothing changes", () => {
+  const branch = [goalStateEntry(goal(), minutes(0))];
+  const missing = buildSideContext({ branch, question: "q", promptFile: { kind: "unreadable", reason: "the prompt file no longer exists" } });
+  assert.match(missing, /\nPrompt file: \/work\/prompt\.md: the prompt file no longer exists\n/u);
+  assert.doesNotMatch(missing, /<prompt_file>/u);
+  const noFile = [goalStateEntry(goal({ objectiveFile: undefined }), minutes(0))];
+  const plain = buildSideContext({ branch: noFile, question: "q", now: minutes(1) });
+  assert.equal(buildSideContext({ branch: noFile, question: "q", promptFile: { kind: "text", text: "ignored", sha256: "x" }, now: minutes(1) }), plain);
+  assert.doesNotMatch(plain, /Prompt file/u);
+});
+
+test("the objective section stays within 16,000 characters with a long objective, notes and file", () => {
+  const branch = [
+    goalStateEntry(goal({ text: "O".repeat(4_000), progress: Array.from({ length: 5 }, (_, index) => ({ at: minutes(index), note: "N".repeat(300) })) }), minutes(5)),
+  ];
+  const context = buildSideContext({ branch, question: "q", promptFile: { kind: "text", text: "F".repeat(50_000), sha256: "abc" }, now: minutes(6) });
+  const objective = context.slice(0, context.indexOf("\n\n## Main agent now"));
+  assert.ok(objective.length <= 16_000, String(objective.length));
+  assert.ok(objective.includes("O".repeat(1_500)) && objective.includes("N".repeat(300)) && objective.includes("F".repeat(7_000)));
+  assert.ok(context.length <= CONTEXT_BUDGET);
+});

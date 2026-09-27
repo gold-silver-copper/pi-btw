@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { test } from "vitest";
+import { afterAll, beforeAll, describe, test } from "vitest";
 import { resolveBtwModel } from "../src/btw.js";
 import { BTW_THREAD_ENTRY_TYPE } from "../src/side-thread.js";
 import { createBtwHarness, KEYS, sideModel } from "./support/btw-fixture.js";
@@ -297,4 +301,77 @@ test("cancelling the steer editor returns to the side thread with the draft", as
   harness.press(KEYS.ctrlC);
   await closed;
   assert.deepEqual(harness.mock.sentUserMessages, []);
+});
+
+describe("the goal's prompt file", () => {
+  let directory: string;
+  beforeAll(() => {
+    directory = mkdtempSync(join(tmpdir(), "pi-btw-prompt-file-"));
+  });
+  afterAll(() => rmSync(directory, { recursive: true, force: true }));
+
+  const sha256 = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
+  const goalOn = (path: string, recorded: string) => [
+    {
+      type: "custom",
+      customType: "goal-state",
+      id: "g1",
+      timestamp: new Date().toISOString(),
+      data: { goal: { id: "goal-1", text: "execute prompt.md", status: "active", objectiveFile: { path, sha256: recorded } } },
+    },
+  ];
+  async function ask(branch: unknown[], questions = ["how close?"], between?: () => void) {
+    const harness = createBtwHarness({ branch });
+    const closed = harness.run(questions[0]);
+    await harness.settle();
+    for (const question of questions.slice(1)) {
+      between?.();
+      harness.type(question);
+      harness.press(KEYS.enter);
+      await harness.settle();
+    }
+    harness.press(KEYS.ctrlC);
+    await closed;
+    return questions.map((_, index) => harness.promptOf(index));
+  }
+
+  test("its contents are read into the objective when a question is sent", async () => {
+    const path = join(directory, "plan.md");
+    writeFileSync(path, "# Plan\n\n1. Port the parser.\n2. Write DONE.txt.\n");
+    const [prompt] = await ask(goalOn(path, sha256("# Plan\n\n1. Port the parser.\n2. Write DONE.txt.\n")));
+    assert.match(prompt ?? "", /Prompt file contents, read when this question was asked:\n<prompt_file>\n# Plan\n\n1\. Port the parser\.\n2\. Write DONE\.txt\.\n\n<\/prompt_file>/u);
+    assert.doesNotMatch(prompt ?? "", /changed since the goal started/u);
+  });
+
+  test("a file edited between two questions shows the new text, and that it changed", async () => {
+    const path = join(directory, "edited.md");
+    writeFileSync(path, "first version\n");
+    const [first, second] = await ask(goalOn(path, sha256("first version\n")), ["q1", "q2"], () => writeFileSync(path, "second version\n"));
+    assert.match(first ?? "", /<prompt_file>\nfirst version\n\n<\/prompt_file>/u);
+    assert.match(second ?? "", /read when this question was asked; the file changed since the goal started:\n<prompt_file>\nsecond version\n\n<\/prompt_file>/u);
+  });
+
+  test("a missing file, a directory, a binary file and an oversized file each get one line", async () => {
+    const binary = join(directory, "binary.md");
+    writeFileSync(binary, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe]));
+    const big = join(directory, "big.md");
+    writeFileSync(big, "x".repeat(1024 * 1024 + 1));
+    const cases: Array<[string, string]> = [
+      [join(directory, "gone.md"), "the prompt file no longer exists"],
+      [directory, "the prompt file is not a regular file"],
+      [binary, "the prompt file is not UTF-8 text, so it is not included"],
+      [big, "the prompt file is larger than 1 MB, so it is not included"],
+    ];
+    for (const [path, reason] of cases) {
+      const [prompt] = await ask(goalOn(path, "recorded"));
+      assert.ok((prompt ?? "").includes(`\nPrompt file: ${path}: ${reason}\n`), `${path}\n${prompt?.slice(0, 400)}`);
+      assert.doesNotMatch(prompt ?? "", /<prompt_file>/u);
+    }
+  });
+
+  test("without an objective file nothing is read", async () => {
+    const [prompt] = await ask([{ type: "custom", customType: "goal-state", id: "g1", data: { goal: { id: "goal-1", text: "port the parser", status: "active" } } }]);
+    assert.doesNotMatch(prompt ?? "", /Prompt file/u);
+    assert.match(prompt ?? "", /Objective:\nport the parser\n/u);
+  });
 });

@@ -201,5 +201,6 @@ The user message holds context sections that the pi-btw extension collected just
 
 - Answer the question directly and concisely.
 - For progress questions ("how close are we?", "why is it taking so long?"), answer from the objective, the progress notes, the tool running now and how long it has run, and the recent results, and say what remains.
+- The Objective may include the goal's prompt file. The remaining work is whatever it asks for that the progress notes and recent activity don't show as done.
 - Say plainly when something cannot be told from the context, and what would tell it. The sections are cut to fit, so older work may be missing.
 - Never claim to have run a command, read a file or changed anything: you have no tools.`;

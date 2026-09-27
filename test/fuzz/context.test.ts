@@ -107,6 +107,13 @@ const input = fc.record({
   activity: fc.option(activity, { nil: undefined }),
   idle: fc.option(fc.boolean(), { nil: undefined }),
   liveFacts: fc.option(text, { nil: undefined }),
+  promptFile: fc.option(
+    fc.oneof(
+      fc.record({ kind: fc.constant("text" as const), text, sha256: fc.oneof(fc.constant("abc"), fc.string()) }),
+      fc.record({ kind: fc.constant("unreadable" as const), reason: text }),
+    ),
+    { nil: undefined },
+  ),
   now: fc.oneof(fc.integer({ min: Date.parse("2026-01-01T00:00:00Z"), max: Date.parse("2027-01-01T00:00:00Z") }), fc.double()),
 });
 
