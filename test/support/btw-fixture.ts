@@ -85,8 +85,9 @@ export function createBtwHarness(options: BtwHarnessOptions = {}) {
     mode: options.mode ?? "tui",
     model: sideModel,
     editorText: options.editorText,
-    isIdle: options.isIdle,
-    editor: options.editor,
+    // The mock spreads its overrides last, so leave out what the test did not set.
+    ...(options.isIdle ? { isIdle: options.isIdle } : {}),
+    ...(options.editor ? { editor: options.editor } : {}),
     cwd: process.cwd(),
     sessionManager: {
       getBranch: () => branch,

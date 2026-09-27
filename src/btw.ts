@@ -1,7 +1,8 @@
 import { type Api, clampThinkingLevel, getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { appendToDraft, formatBtwBringToMain } from "./bring-to-main.js";
-import { buildConversationContext, buildSidePrompt } from "./conversation-context.js";
+import { trackMainAgent } from "./activity.js";
+import { buildSideContext } from "./context.js";
 import { runBtwFullscreen } from "./fullscreen-ui.js";
 import { createBtwShortcuts } from "./keybindings.js";
 import { type BtwSettings, type BtwSettingsResult, type BtwThinkingLevel, parseBtwModelReference, readBtwSettings } from "./settings.js";
@@ -40,6 +41,7 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
   const readSettings = dependencies.readSettings ?? (() => readBtwSettings());
   const runFullscreen = dependencies.runFullscreen ?? runBtwFullscreen;
   const createCompleteSimple = dependencies.createCompleteSimple ?? createModelRegistryCompleteSimple;
+  const activity = trackMainAgent(pi);
   let thread = createSideThread();
   const persist = () => pi.appendEntry(BTW_THREAD_ENTRY_TYPE, serializeThread(thread.turns));
 
@@ -83,12 +85,16 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
 
       const result = await runFullscreen<BtwWorkspaceResult>(ctx, (screen, theme, keybindings, done) => {
         let request: AbortController | undefined;
-        const ask = async (question: string) => {
-          request = new AbortController();
-          const { signal } = request;
-          view.startAnswer(question);
-          const prompt = buildSidePrompt(question, buildConversationContext(ctx.sessionManager.getBranch()), current.turns);
-          const outcome = await completeSideTurn({
+        const answer = async (question: string, signal: AbortSignal) => {
+          // Rebuilt for every question, so a follow-up sees the current state.
+          const prompt = buildSideContext({
+            branch: ctx.sessionManager.getBranch(),
+            question,
+            turns: current.turns,
+            activity,
+            idle: ctx.isIdle(),
+          });
+          return completeSideTurn({
             model,
             prompt,
             thinkingLevel: current.thinkingLevel ?? "low",
@@ -97,6 +103,15 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
             completeSimple,
             sessionId: readBtwSessionId(ctx),
           });
+        };
+        const ask = async (question: string) => {
+          request = new AbortController();
+          const { signal } = request;
+          view.startAnswer(question);
+          const outcome = await answer(question, signal).catch((error: unknown) => ({
+            kind: "error" as const,
+            message: error instanceof Error ? error.message : String(error),
+          }));
           if (outcome.kind === "aborted" || signal.aborted) return;
           current.turns.push({
             question,
