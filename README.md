@@ -110,6 +110,7 @@ npm test                  # vitest, with the mock pi in test/support/
 npm run fuzz              # fast-check, 2,000 runs per property (below)
 BTW_AUDIT=1 npx vitest run test/audit.test.ts   # measure the builder on your newest 30 goal sessions
 python3 test/fixtures/drive-tui.py /tmp/pi-btw-tui   # offline end-to-end run in the real pi TUI (needs pyte and a pi-goal checkout)
+python3 test/fixtures/drive-tui-live.py /tmp/pi-btw-live   # live: a goal and two side questions through claude-bridge
 node test/fixtures/measure-bridge-cache.mjs system.txt question-1.txt question-2.txt   # live: cache use through claude-bridge
 ```
 
