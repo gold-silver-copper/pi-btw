@@ -72,3 +72,26 @@ function truncateFromStart(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
   return `[Earlier context omitted; showing the last ${maxChars} characters.]\n${text.slice(-maxChars)}`;
 }
+
+/** One request: the main conversation, the thread's earlier answers, then the question. */
+export function buildSidePrompt(
+  question: string,
+  conversationContext: string,
+  earlier: readonly { question: string; answer: string; error?: true }[],
+): string {
+  const answered = earlier.filter((turn) => !turn.error);
+  return [
+    "Answer this side question without modifying the main conversation.",
+    "",
+    "<conversation_context>",
+    conversationContext || "No prior conversation context was available.",
+    "</conversation_context>",
+    ...(answered.length > 0
+      ? ["", "<earlier_side_questions>", ...answered.map((turn) => `Q: ${turn.question}\nA: ${turn.answer}`), "</earlier_side_questions>"]
+      : []),
+    "",
+    "<side_question>",
+    question,
+    "</side_question>",
+  ].join("\n");
+}

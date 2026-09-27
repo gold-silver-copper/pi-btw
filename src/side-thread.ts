@@ -3,22 +3,16 @@ import type {
   Api,
   AssistantMessage,
   Context,
-  Message,
   Model,
   ModelsSimpleStreamOptions,
   ProviderHeaders,
-  UserMessage,
 } from "@earendil-works/pi-ai";
+import type { BtwThinkingLevel } from "./settings.js";
 
-export const BTW_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-
-export type BtwThinkingLevel = (typeof BTW_THINKING_LEVELS)[number];
-
-export interface SideQuestionAuth {
-  apiKey?: string;
-  headers?: ProviderHeaders;
-  env?: Record<string, string>;
-}
+export const BTW_THREAD_ENTRY_TYPE = "btw-thread";
+export const MAX_THREAD_TURNS = 30;
+export const MAX_ANSWER_CHARS = 20_000;
+const MAX_QUESTION_CHARS = 20_000;
 
 export interface CompleteSimpleFunction {
   <TApi extends Api>(
@@ -30,143 +24,112 @@ export interface CompleteSimpleFunction {
   appliesRequestHeaderTransforms?: boolean;
 }
 
-export type SideThreadTurn =
-  | {
-      kind: "answered";
-      question: string;
-      answer: string;
-      response: AssistantMessage;
-    }
-  | {
-      kind: "error";
-      question: string;
-      answer: string;
-    };
+export interface BtwTurn {
+  question: string;
+  /** The answer, or the error message when `error` is set. */
+  answer: string;
+  /** Epoch milliseconds when the turn finished. */
+  at: number;
+  /** `provider/model-id` that answered. */
+  model: string;
+  error?: true;
+}
 
+/** The session's one side thread. */
 export interface SideThread {
-  conversationContext: string;
-  turns: SideThreadTurn[];
+  turns: BtwTurn[];
   /**
-   * Provider routing ID (`options.sessionId`) shared by this thread's turns.
-   * Kept separate from the main Pi session so side requests never share its cache or affinity lane.
+   * Provider routing ID (`options.sessionId`) shared by this thread's requests.
+   * Kept separate from the main pi session so side requests never share its cache or affinity lane.
    */
   routingSessionId: string;
+  /** Thinking level chosen in this thread; reset by `/btw new` and `/reload`. */
+  thinkingLevel?: BtwThinkingLevel;
 }
 
-export function createSideThread(conversationContext: string): SideThread {
-  return { conversationContext, turns: [], routingSessionId: randomUUID() };
+export interface BtwThreadEntryData {
+  turns: BtwTurn[];
 }
 
-export function buildSideThreadMessages(thread: SideThread, question: string): Message[] {
-  const answeredTurns = thread.turns.filter(
-    (turn): turn is Extract<SideThreadTurn, { kind: "answered" }> => turn.kind === "answered",
-  );
-  const messages: Message[] = [];
+export function createSideThread(turns: BtwTurn[] = []): SideThread {
+  return { turns, routingSessionId: randomUUID() };
+}
 
-  if (answeredTurns.length === 0) {
-    messages.push(createUserMessage(buildUserPrompt(question, thread.conversationContext)));
-    return messages;
+/** The snapshot appended as a `btw-thread` custom entry: the newest turns, answers capped. */
+export function serializeThread(turns: readonly BtwTurn[]): BtwThreadEntryData {
+  return {
+    turns: turns.slice(-MAX_THREAD_TURNS).map((turn) => ({
+      ...turn,
+      answer: turn.answer.slice(0, MAX_ANSWER_CHARS),
+    })),
+  };
+}
+
+/** Turns from the latest `btw-thread` entry on the branch; anything malformed is skipped. */
+export function restoreThreadTurns(entries: readonly unknown[]): BtwTurn[] {
+  let latest: unknown;
+  for (const entry of entries) {
+    if (isRecord(entry) && entry.type === "custom" && entry.customType === BTW_THREAD_ENTRY_TYPE) latest = entry.data;
   }
-
-  const [first, ...rest] = answeredTurns;
-  messages.push(createUserMessage(buildUserPrompt(first.question, thread.conversationContext)), first.response);
-  for (const turn of rest) {
-    messages.push(createUserMessage(buildFollowUpPrompt(turn.question)), turn.response);
+  if (!isRecord(latest) || !Array.isArray(latest.turns)) return [];
+  const turns: BtwTurn[] = [];
+  for (const turn of latest.turns) {
+    if (!isRecord(turn) || typeof turn.question !== "string" || typeof turn.answer !== "string") continue;
+    turns.push({
+      question: turn.question.slice(0, MAX_QUESTION_CHARS),
+      answer: turn.answer.slice(0, MAX_ANSWER_CHARS),
+      at: typeof turn.at === "number" && Number.isFinite(turn.at) ? turn.at : 0,
+      model: typeof turn.model === "string" ? turn.model : "",
+      ...(turn.error === true ? { error: true as const } : {}),
+    });
   }
-  messages.push(createUserMessage(buildFollowUpPrompt(question)));
-  return messages;
+  return turns.slice(-MAX_THREAD_TURNS);
 }
 
-export interface CompleteSideThreadTurnOptions {
-  thread: SideThread;
+export interface CompleteSideTurnOptions {
   model: Model<Api>;
-  question: string;
+  /** The whole request: context sections and the question. */
+  prompt: string;
   thinkingLevel: BtwThinkingLevel;
-  auth?: SideQuestionAuth;
+  routingSessionId: string;
   signal?: AbortSignal;
   completeSimple: CompleteSimpleFunction;
+  /** Main pi session ID, used only for OpenCode attribution headers. */
   sessionId?: string;
 }
 
-export type CompleteSideThreadTurnResult =
-  | { kind: "answered"; response: AssistantMessage; answer: string }
-  | { kind: "aborted" }
-  | { kind: "error"; message: string };
+export type CompleteSideTurnResult = { kind: "answered"; answer: string } | { kind: "aborted" } | { kind: "error"; message: string };
 
-export async function completeSideThreadTurn({
-  thread,
+/** One tool-less request with its own system prompt: a single user message. */
+export async function completeSideTurn({
   model,
-  question,
+  prompt,
   thinkingLevel,
-  auth,
+  routingSessionId,
   signal,
   completeSimple,
   sessionId,
-}: CompleteSideThreadTurnOptions): Promise<CompleteSideThreadTurnResult> {
+}: CompleteSideTurnOptions): Promise<CompleteSideTurnResult> {
   if (signal?.aborted) return { kind: "aborted" };
   try {
     const response = await completeSimple(
       model,
-      { systemPrompt: SYSTEM_PROMPT, messages: buildSideThreadMessages(thread, question) },
+      { systemPrompt: SYSTEM_PROMPT, messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }] },
       buildStreamOptions(
-        auth,
-        { thinkingLevel, signal, model, sessionId, routingSessionId: thread.routingSessionId },
+        { thinkingLevel, signal, model, sessionId, routingSessionId },
         completeSimple.appliesRequestHeaderTransforms === true,
       ),
     );
     if (signal?.aborted || response?.stopReason === "aborted") return { kind: "aborted" };
-    if (!isAssistantMessage(response)) {
-      return { kind: "error", message: "The side model returned a malformed response." };
-    }
+    if (!isAssistantMessage(response)) return { kind: "error", message: "The side model returned a malformed response." };
     if (response.stopReason === "error") {
-      return {
-        kind: "error",
-        message: response.errorMessage ?? "The side model returned an error.",
-      };
+      return { kind: "error", message: response.errorMessage ?? "The side model returned an error." };
     }
-
-    const answer = extractAssistantText(response) || "No response received.";
-    thread.turns.push({ kind: "answered", question, answer, response });
-    return { kind: "answered", response, answer };
+    return { kind: "answered", answer: extractAssistantText(response) || "No response received." };
   } catch (error: unknown) {
     if (signal?.aborted) return { kind: "aborted" };
-    return { kind: "error", message: formatError(error) };
+    return { kind: "error", message: error instanceof Error ? error.message : String(error) };
   }
-}
-
-export interface CompleteSideQuestionOptions {
-  model: Model<Api>;
-  question: string;
-  conversationContext: string;
-  thinkingLevel: BtwThinkingLevel;
-  auth?: SideQuestionAuth;
-  signal?: AbortSignal;
-  completeSimple: CompleteSimpleFunction;
-  sessionId?: string;
-}
-
-export async function completeSideQuestion({
-  model,
-  question,
-  conversationContext,
-  thinkingLevel,
-  auth,
-  signal,
-  completeSimple,
-  sessionId,
-}: CompleteSideQuestionOptions): Promise<AssistantMessage> {
-  return completeSimple(
-    model,
-    {
-      systemPrompt: SYSTEM_PROMPT,
-      messages: [createUserMessage(buildUserPrompt(question, conversationContext))],
-    },
-    buildStreamOptions(
-      auth,
-      { thinkingLevel, signal, model, sessionId, routingSessionId: randomUUID() },
-      completeSimple.appliesRequestHeaderTransforms === true,
-    ),
-  );
 }
 
 export function extractAssistantText(response: AssistantMessage): string {
@@ -186,39 +149,15 @@ function isAssistantMessage(value: unknown): value is AssistantMessage {
   return candidate.role === "assistant" && Array.isArray(candidate.content) && typeof candidate.stopReason === "string";
 }
 
-export function buildUserPrompt(question: string, conversationContext: string): string {
-  return [
-    "Answer this side question without modifying the main conversation.",
-    "",
-    "<side_question>",
-    question,
-    "</side_question>",
-    "",
-    "<conversation_context>",
-    conversationContext || "No prior conversation context was available.",
-    "</conversation_context>",
-  ].join("\n");
-}
-
-export function buildFollowUpPrompt(question: string): string {
-  return ["Continue the same side conversation.", "", "<side_question>", question, "</side_question>"].join("\n");
-}
-
-function createUserMessage(text: string): UserMessage {
-  return {
-    role: "user",
-    content: [{ type: "text", text }],
-    timestamp: Date.now(),
-  };
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // Minimal session-header mirror of Pi core provider attribution.
 // Core does not export this helper and extensions have no SettingsManager, so only session
 // headers are mirrored here. Default attribution headers are intentionally out of scope.
 // Request-time auth can replace a custom provider's base URL after these options are built,
-// so only canonical provider IDs are safe attribution signals. Keep merge semantics
-// bug-compatible with core: case-sensitive Object.assign, explicit request headers win on
-// exact-case match.
+// so only canonical provider IDs are safe attribution signals.
 function getOpencodeSessionHeaders(
   model: Pick<Model<Api>, "provider">,
   sessionId?: string,
@@ -227,51 +166,35 @@ function getOpencodeSessionHeaders(
   return { "x-opencode-session": sessionId, "x-opencode-client": "pi" };
 }
 
-function mergeSessionHeaders(
-  authHeaders: ProviderHeaders | undefined,
-  sessionHeaders: ProviderHeaders | undefined,
-): ProviderHeaders | undefined {
-  if (!sessionHeaders && !authHeaders) return undefined;
-  // Bug-compatible with core mergeProviderAttributionHeaders: case-sensitive assign.
-  return { ...sessionHeaders, ...authHeaders };
-}
-
 interface BuildSideThreadStreamOptions {
   thinkingLevel: BtwThinkingLevel;
   signal?: AbortSignal;
-  model?: Pick<Model<Api>, "provider">;
-  /** Main Pi session ID, used only for OpenCode attribution headers. */
+  model: Pick<Model<Api>, "provider">;
   sessionId?: string;
   /** Side-request routing ID sent as `options.sessionId`; never the main session ID. */
   routingSessionId: string;
 }
 
 function buildStreamOptions(
-  auth: SideQuestionAuth | undefined,
   { thinkingLevel, signal, model, sessionId, routingSessionId }: BuildSideThreadStreamOptions,
   applyRequestHeaderTransforms: boolean,
 ): ModelsSimpleStreamOptions {
-  const sessionHeaders = model ? getOpencodeSessionHeaders(model, sessionId) : undefined;
+  const sessionHeaders = getOpencodeSessionHeaders(model, sessionId);
   const options: ModelsSimpleStreamOptions = {
-    apiKey: auth?.apiKey,
-    headers: applyRequestHeaderTransforms ? auth?.headers : mergeSessionHeaders(auth?.headers, sessionHeaders),
-    env: auth?.env,
+    headers: applyRequestHeaderTransforms ? undefined : sessionHeaders,
     signal,
     // Pi documents sessionId as optional, but providers use it for request routing and
     // some provider overrides require it. Pi core also mints a fresh ID for one-off requests.
     sessionId: routingSessionId,
   };
   if (applyRequestHeaderTransforms && sessionHeaders) {
-    options.transformHeaders = (headers) => mergeSessionHeaders(headers, sessionHeaders) ?? {};
+    // Bug-compatible with core mergeProviderAttributionHeaders: case-sensitive assign, request headers win.
+    options.transformHeaders = (headers) => ({ ...sessionHeaders, ...headers });
   }
   if (thinkingLevel !== "off") options.reasoning = thinkingLevel;
   return options;
 }
 
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-const SYSTEM_PROMPT = `You answer quick side questions for a coding-agent user.
+export const SYSTEM_PROMPT = `You answer quick side questions for a coding-agent user.
 
 Use the provided conversation context only as background. Answer the user's side question directly and concisely. Do not claim to have changed files, run tools, or affected the main task. If the context is insufficient, say what is unknown and give the best next step.`;

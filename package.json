@@ -31,9 +31,6 @@
     "fuzz": "FUZZ_RUNS=2000 vitest run test/fuzz",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@narumitw/pi-tui-kit": "^0.64.0"
-  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
