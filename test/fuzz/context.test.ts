@@ -168,3 +168,46 @@ test("under pressure the budget holds and the newest activity is kept", { timeou
     { ...options, numRuns: Math.max(20, Math.floor(RUNS / 5)) },
   );
 });
+
+test("the clock and new activity never change the sections before 'Main agent now'", { timeout: TIMEOUT }, () => {
+  const smallTurn = fc.record({
+    question: fc.string({ maxLength: 200 }),
+    answer: fc.string({ maxLength: 300 }),
+    at: fc.integer({ min: 0, max: 2_000_000_000_000 }),
+    model: fc.constant("m"),
+    error: fc.option(fc.constant(true as const), { nil: undefined }),
+  });
+  // Later activity: tool calls, their results and agent prose; no new goal state or compaction.
+  const later = fc.array(
+    fc.oneof(
+      pair,
+      fc.record({ role: fc.constantFrom("assistant", "toolResult"), content, at: time }).map(({ role, content, at }) => [
+        { type: "message", timestamp: at, message: { role, content } },
+      ]),
+    ),
+    { maxLength: 15 },
+  );
+  fc.assert(
+    fc.property(
+      input,
+      fc.array(smallTurn, { maxLength: 10 }),
+      later,
+      fc.array(smallTurn, { maxLength: 3 }),
+      fc.integer({ min: 0, max: 7 * 86_400_000 }),
+      text,
+      (value, turns, extra, newTurns, delta, question) => {
+        const first = buildSideContext({ ...value, turns });
+        const stable = first.slice(0, first.indexOf("\n\n## Main agent now"));
+        const second = buildSideContext({
+          ...value,
+          branch: [...value.branch, ...extra.flat()],
+          turns: [...turns, ...newTurns],
+          now: value.now + delta,
+          question,
+        });
+        assert.ok(second.startsWith(stable), "sections 1-3 are a stable prefix");
+      },
+    ),
+    options,
+  );
+});

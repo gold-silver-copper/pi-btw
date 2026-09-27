@@ -6,13 +6,16 @@
  * Takes the newest 30 session files under $BTW_AUDIT_SESSIONS (default ~/.pi/agent/sessions)
  * that contain a goal-state entry, cuts each at 25/50/75/100% of its lines, and builds both
  * upstream's 40,000-character context and this package's context at every point. The report
- * goes to $BTW_AUDIT_REPORT (default /tmp/pi-btw-fork/audit.md).
+ * goes to $BTW_AUDIT_REPORT (default /tmp/pi-btw-fork/audit.md). Next to it go the system
+ * prompt and two questions two minutes apart on the newest session, for
+ * test/fixtures/measure-bridge-cache.mjs.
  */
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "vitest";
 import { buildSideContext, messageText } from "../src/context.js";
+import { SYSTEM_PROMPT } from "../src/side-thread.js";
 
 const SESSIONS = process.env.BTW_AUDIT_SESSIONS ?? join(homedir(), ".pi", "agent", "sessions");
 const REPORT = process.env.BTW_AUDIT_REPORT ?? "/tmp/pi-btw-fork/audit.md";
@@ -156,5 +159,15 @@ test.runIf(process.env.BTW_AUDIT === "1")("measure the context builder against t
   ].join("\n");
   mkdirSync(dirname(REPORT), { recursive: true });
   writeFileSync(REPORT, report);
+  const newest = readFileSync(files[0] ?? "", "utf8").trim().split("\n").map((line) => JSON.parse(line) as Entry).filter((entry) => entry.type !== "session");
+  const leaf = newest.at(-1);
+  if (leaf) {
+    const branch = branchAt(newest, leaf);
+    const now = Date.parse(String(leaf.timestamp)) || Date.now();
+    const first = { question: QUESTION, answer: "(the first answer)", at: now + 30_000, model: "m" };
+    writeFileSync(join(dirname(REPORT), "system.txt"), SYSTEM_PROMPT);
+    writeFileSync(join(dirname(REPORT), "question-1.txt"), buildSideContext({ branch, question: QUESTION, now }));
+    writeFileSync(join(dirname(REPORT), "question-2.txt"), buildSideContext({ branch, question: "and how long will that take?", turns: [first], now: now + 120_000 }));
+  }
   console.log(report);
 });

@@ -103,6 +103,12 @@ export function createBtwHarness(options: BtwHarnessOptions = {}) {
     },
   });
   const ctx = mockContext.ctx;
+  // Like pi, appended custom entries join the branch.
+  const appendEntry = mock.rawPi.appendEntry.bind(mock.rawPi);
+  mock.rawPi.appendEntry = (customType: string, data: unknown) => {
+    appendEntry(customType, data);
+    branch.push({ type: "custom", customType, data, id: `custom-${branch.length}`, timestamp: new Date().toISOString() });
+  };
   btw(mock.pi, {
     readSettings: async () => ({ settings: { ...DEFAULT_BTW_SETTINGS, liveFacts: false, ...options.settings }, warnings: options.warnings ?? [] }),
     createCompleteSimple: () => completeSimple,

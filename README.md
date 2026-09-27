@@ -107,12 +107,33 @@ pi-btw never changes the main session's model, thinking level, branch or editor 
 npm install
 npm run typecheck
 npm test                  # vitest, with the mock pi in test/support/
-npm run fuzz              # fast-check: the context builder, the settings reader, thread restore
+npm run fuzz              # fast-check, 2,000 runs per property (below)
 BTW_AUDIT=1 npx vitest run test/audit.test.ts   # measure the builder on your newest 30 goal sessions
 python3 test/fixtures/drive-tui.py /tmp/pi-btw-tui   # offline end-to-end run in the real pi TUI (needs pyte and a pi-goal checkout)
+node test/fixtures/measure-bridge-cache.mjs system.txt question-1.txt question-2.txt   # live: cache use through claude-bridge
 ```
 
+The fuzz properties (`test/fuzz/`):
+
+- **Context builder:** any branch (random roles, content blocks, compaction and goal-state entries, huge or empty payloads) never throws, stays within 60,000 characters, keeps the objective, and never emits more than 200 characters of a tool call's arguments. Under pressure the newest activity is kept. The clock and new activity never change the sections before "Main agent now".
+- **The command, as a state machine:** random sequences of `/btw`, typing, sending, answers that succeed, fail or throw, `Ctrl+C`, `Ctrl+R`, `Ctrl+N` (sent or cancelled), `/btw new`, `/reload`, idle changes, agent events and new entries, checked after every step against a model: the persisted thread, the main editor (it only ever gets appended to), what reaches the main agent (only confirmed steers, as a steer while it runs), one side request at a time, each tool-less and within budget with the question last, the thinking level sent, and the main thinking level untouched.
+- **Workspace:** any keystrokes, pastes and escape sequences at widths of 10 to 200 columns keep every line within the width, never submit while an answer is pending, and close at most once.
+- **Live facts:** only `git -C … rev-parse|status|log` and `gh pr view` ever run, whatever the commands print; directories taken from tool calls are existing absolute directories; any pull-request JSON is summarized or ignored; the 20-second cache collects again exactly when it should.
+- **Parsers:** the settings reader and thread restore accept anything.
+
 `test/fixtures/offline-provider.ts` is a scripted offline model for driving pi by hand; the audit test writes its report outside the repository and commits no session content.
+
+### Prompt caching
+
+Through claude-bridge a side question is one tool-less Claude Code turn whose whole request is a single prompt string, and Claude Code caches at the end of it. Measured with `measure-bridge-cache.mjs` on a real 60,000-character context (about 28,000 tokens):
+
+| | Cache read | Cache write |
+| --- | --- | --- |
+| A question | 0 | 27,941 |
+| The same request again | 27,941 | 0 |
+| A follow-up two minutes later | 0 | 27,977 |
+
+Only an identical request reuses the cache. A follow-up shares its first sections with the question before it, and would share the whole earlier request if it were built to, but the cache is only read at content-block boundaries and the bridge sends one block, so nothing is reused. Providers that cache by token prefix can reuse the first sections, which is why nothing in them depends on the clock.
 
 ## What changed from upstream
 
@@ -137,6 +158,8 @@ python3 test/fixtures/drive-tui.py /tmp/pi-btw-tui   # offline end-to-end run in
 - The timeline keeps what fits in the budget; on a busy goal that is roughly the last half hour.
 - What the main agent is doing right now (the running tool, when the run started) is tracked from pi's events in memory, so right after `/reload` it is known only from the session.
 - Side calls use the same provider and usage limits as the main agent.
+- Through claude-bridge, each question writes its whole context to the prompt cache and follow-ups do not read it back (see [Prompt caching](#prompt-caching)); the bridge's side-call path also ignores the thinking level.
+- pi-tui's editor recurses without end on a double-width character at one or two columns wide, in pi's own editor too.
 
 ## License
 

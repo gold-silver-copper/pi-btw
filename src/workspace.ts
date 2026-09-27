@@ -179,7 +179,7 @@ export class BtwWorkspaceView implements BtwWorkspaceComponent, Focusable {
       ...this.transcript.flatMap((component) => component.render(width)).map(stripShellIntegrationMarkers),
       this.renderFooter(width),
       ...this.editor.render(width),
-    ];
+    ].map((line) => truncateToWidth(line, width));
   }
 
   handleInput(data: string): void {
