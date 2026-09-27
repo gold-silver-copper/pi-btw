@@ -104,7 +104,7 @@ test("each tool gets its one-line summary", () => {
   assert.equal(formatToolCall("bash", { command: "x".repeat(500) }).length, "bash ``".length + 200);
 });
 
-test("the objective, status, prompt file, active time and last five progress notes come from pi-goal", () => {
+test("the objective, status, prompt file and last five progress notes come from pi-goal; active time is in the live section", () => {
   const long = `Build the widget. ${"Requirement. ".repeat(40)}`;
   const branch = [
     userEntry("Goal mode is active. <goal_objective>execute prompt.md</goal_objective>", minutes(0)),
@@ -122,10 +122,13 @@ test("the objective, status, prompt file, active time and last five progress not
   ];
   const context = buildSideContext({ branch, question: "how close are we?", now: minutes(50) });
   const objective = context.slice(0, context.indexOf("## Main agent now"));
-  assert.match(objective, /^## Objective\npi-goal status: active · active time 40m\nPrompt file: \/work\/prompt\.md/u);
+  assert.match(objective, /^## Objective\npi-goal status: active\nPrompt file: \/work\/prompt\.md/u);
   assert.ok(objective.includes(long.trim()));
   assert.doesNotMatch(objective, /note [01]\b/u);
-  assert.match(objective, /- 12:10:00 \(40m ago\): note 2\n[\s\S]*- 12:30:00 \(20m ago\): note 6/u);
+  assert.match(objective, /- 12:10:00: note 2\n[\s\S]*- 12:30:00: note 6/u);
+  // The clock-dependent parts live in "Main agent now", so the objective is a stable prefix.
+  assert.match(context, /## Main agent now\n[\s\S]*Goal active time: 40m; latest progress note 20m ago/u);
+  assert.equal(buildSideContext({ branch, question: "later?", now: minutes(90) }).slice(0, objective.length), objective);
 });
 
 test("a paused goal shows why", () => {
@@ -134,7 +137,8 @@ test("a paused goal shows why", () => {
     question: "q",
     now: minutes(2),
   });
-  assert.match(context, /pi-goal status: paused · paused \(interrupted\) · active time 30m/u);
+  assert.match(context, /pi-goal status: paused · paused \(interrupted\)\n/u);
+  assert.match(context, /Goal active time: 30m\n/u);
 });
 
 test("without pi-goal the objective is the first user message", () => {

@@ -46,7 +46,7 @@ export function buildSideContext(input: SideContextInput): string {
   const goal = findGoal(branch);
   const compaction = branch.filter((entry) => entry.type === "compaction" && typeof entry.summary === "string").at(-1);
   const before = [
-    section("Objective", objectiveBody(branch, goal, now), OBJECTIVE_CHARS),
+    section("Objective", objectiveBody(branch, goal), OBJECTIVE_CHARS),
     compaction ? section("Earlier work", `Compaction summary from ${clock(entryTime(compaction))}:\n${compaction.summary}`, EARLIER_WORK_CHARS) : undefined,
     sideQuestionsSection(input.turns ?? []),
     section("Main agent now", mainAgentBody(branch, goal, input, now), MAIN_AGENT_CHARS),
@@ -88,7 +88,8 @@ function findGoal(branch: readonly Record<string, unknown>[]): GoalState | undef
   return { goal: latest, text };
 }
 
-function objectiveBody(branch: readonly Record<string, unknown>[], state: GoalState | undefined, now: number): string {
+/** Nothing here depends on the clock; active time and ages are in "Main agent now". */
+function objectiveBody(branch: readonly Record<string, unknown>[], state: GoalState | undefined): string {
   if (!state) {
     const first = branch.find((entry) => entry.type === "message" && isRecord(entry.message) && entry.message.role === "user");
     const text = first ? messageText((first.message as Record<string, unknown>).content) : "";
@@ -99,7 +100,6 @@ function objectiveBody(branch: readonly Record<string, unknown>[], state: GoalSt
     `pi-goal status: ${oneLine(clip(str(goal.status) ?? "unknown", 40))}`,
     str(goal.pauseReason) ? `paused (${oneLine(clip(str(goal.pauseReason) ?? "", 40))})` : undefined,
     str(goal.stopDetail) ? `detail: ${oneLine(clip(str(goal.stopDetail) ?? "", 300))}` : undefined,
-    `active time ${duration(activeSeconds(goal, now))}`,
   ].filter(Boolean);
   const head = [status.join(" · ")];
   const path = isRecord(goal.objectiveFile) ? str(goal.objectiveFile.path) : undefined;
@@ -107,7 +107,7 @@ function objectiveBody(branch: readonly Record<string, unknown>[], state: GoalSt
   const notes = (Array.isArray(goal.progress) ? goal.progress : [])
     .filter((note): note is { at: number; note: string } => isRecord(note) && typeof note.note === "string" && finite(note.at))
     .slice(-PROGRESS_NOTES)
-    .map((note) => `- ${clock(note.at)} (${duration((now - note.at) / 1000)} ago): ${oneLine(clip(note.note, 300))}`);
+    .map((note) => `- ${clock(note.at)}: ${oneLine(clip(note.note, 300))}`);
   const tail = notes.length > 0 ? ["Progress notes, newest last:", ...notes] : ["No progress notes yet."];
   const room = OBJECTIVE_CHARS - 40 - [...head, ...tail].join("\n").length;
   const text = state.text?.trim() ? clip(state.text.trim(), Math.max(200, room)) : "(objective text not found)";
@@ -159,6 +159,14 @@ function mainAgentBody(
     lines.push(`Last activity: ${activity.lastActivity ?? "event"} ${duration((now - activity.lastActivityAt) / 1000)} ago`);
   } else if (lastEntry !== undefined) {
     lines.push(`Last session entry: ${clock(lastEntry)} (${duration((now - lastEntry) / 1000)} ago)`);
+  }
+  if (state) {
+    const latestNote = (Array.isArray(state.goal.progress) ? state.goal.progress : [])
+      .map((note) => (isRecord(note) && finite(note.at) ? note.at : undefined))
+      .filter((at): at is number => at !== undefined)
+      .at(-1);
+    const noteAge = latestNote === undefined ? "" : `; latest progress note ${duration((now - latestNote) / 1000)} ago`;
+    lines.push(`Goal active time: ${duration(activeSeconds(state.goal, now))}${noteAge}`);
   }
   const waiting = state?.goal.status === "active" && isRecord(state.goal.waiting) ? state.goal.waiting : undefined;
   if (waiting) {
