@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { createMockPi } from "../../../test/support.js";
+import { createMockPi } from "./support/pi-mock.js";
 import { registerBtwMainThreadUpdates } from "../src/main-thread-updates.js";
 
 const MAIN_THREAD_UPDATE_EVENTS = [

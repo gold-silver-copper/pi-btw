@@ -1,10 +1,11 @@
 {
-  "name": "@narumitw/pi-btw",
-  "version": "0.61.1",
-  "description": "Pi extension that adds a /btw side-question command.",
+  "name": "pi-btw",
+  "version": "0.62.0",
+  "description": "Pi extension: ask side questions about a running agent without adding them to the main conversation.",
   "type": "module",
   "license": "MIT",
   "private": false,
+  "author": "gold_silver_copper",
   "keywords": [
     "pi-package",
     "pi-extension",
@@ -14,34 +15,21 @@
   ],
   "files": [
     "src",
-    "dist",
-    "docs",
     "README.md",
     "LICENSE"
   ],
   "pi": {
     "extensions": [
-      "./dist/index.ts"
+      "./src/index.ts"
     ]
   },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "node scripts/build-runtime.mjs",
-    "check": "npm run build && biome check . && npm run typecheck",
-    "format": "biome check --write .",
-    "typecheck": "tsc --noEmit",
-    "prepack": "npm run build"
-  },
-  "devDependencies": {
-    "@earendil-works/pi-ai": "0.87.1",
-    "@earendil-works/pi-coding-agent": "0.87.1",
-    "@earendil-works/pi-tui": "0.87.1",
-    "esbuild": "0.28.2",
-    "typescript": "7.0.2"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/narumiruna/pi-extensions",
-    "directory": "packages/pi-btw"
+    "test": "vitest run",
+    "fuzz": "FUZZ_RUNS=2000 vitest run test/fuzz",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@narumitw/pi-tui-kit": "^0.64.0"
@@ -50,5 +38,18 @@
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "0.87.1",
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@earendil-works/pi-tui": "0.87.1",
+    "@types/node": "^26.6.3",
+    "fast-check": "^4.10.2",
+    "typescript": "7.0.2",
+    "vitest": "^5.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gold-silver-copper/pi-btw.git"
   }
 }

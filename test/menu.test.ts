@@ -8,7 +8,7 @@ import { type ExtensionCommandContext, initTheme } from "@earendil-works/pi-codi
 import { KeybindingsManager, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
 import { createTuiHarness } from "@narumitw/pi-tui-kit/testing";
 import { test, vi } from "vitest";
-import { createMockContext } from "../../../test/support.js";
+import { createMockContext } from "./support/pi-mock.js";
 import { runBtwMenuPreservingEditor, showBtwCommandMenu } from "../src/menu.js";
 import { BTW_SETTINGS_FILE } from "../src/settings.js";
 

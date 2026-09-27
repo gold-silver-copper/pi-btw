@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { test } from "vitest";
-import { createMockContext, createMockPi } from "../../../test/support.js";
+import { createMockContext, createMockPi } from "./support/pi-mock.js";
 import btw, {
   BTW_SETTINGS_FILE,
   buildConversationContext,

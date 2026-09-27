@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { type ExtensionCommandContext, initTheme, type SessionTreeNode } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { test } from "vitest";
-import { createCustomSelectorHarness, createMockContext } from "../../../test/support.js";
+import { createCustomSelectorHarness, createMockContext } from "./support/pi-mock.js";
 import { type MainThreadTreeSelectorOptions, pickMainEntry } from "../src/main-tree-picker.js";
 
 function userNode(id: string, parentId: string | null, text: string): SessionTreeNode {
