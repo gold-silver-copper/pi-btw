@@ -23,7 +23,7 @@ import { BtwWorkspaceView } from "./workspace.js";
 type BtwModelRegistry = Pick<ExtensionCommandContext["modelRegistry"], "find" | "getAvailable">;
 type BtwCompletionRegistry = Pick<ExtensionCommandContext["modelRegistry"], "streamSimple">;
 
-export type BtwWorkspaceResult = { kind: "closed" } | { kind: "bringBack" };
+export type BtwWorkspaceResult = { kind: "closed" } | { kind: "bringBack" } | { kind: "steer"; draft: string };
 
 export interface BtwExtensionDependencies {
   readSettings?: () => Promise<BtwSettingsResult>;
@@ -87,88 +87,103 @@ export default function btw(pi: ExtensionAPI, dependencies: BtwExtensionDependen
       current.thinkingLevel = clampThinkingLevel(model, current.thinkingLevel ?? startLevel) as BtwThinkingLevel;
       const completeSimple = createCompleteSimple(ctx.modelRegistry);
 
-      const result = await runFullscreen<BtwWorkspaceResult>(ctx, (screen, theme, keybindings, done) => {
-        let request: AbortController | undefined;
-        const answer = async (question: string, signal: AbortSignal) => {
-          // Rebuilt for every question, so a follow-up sees the current state.
-          const branch = ctx.sessionManager.getBranch();
-          let facts: string | undefined;
-          if (settings.liveFacts) {
-            const cache = liveFacts.get(current) ?? new LiveFactsCache();
-            liveFacts.set(current, cache);
-            const key = [ctx.cwd, ...recentDirectories(branch)].join("\n");
-            facts = await cache.get(key, Date.now(), () => collectLiveFacts({ cwd: ctx.cwd, branch, run: runCommand }));
-            if (signal.aborted) return { kind: "aborted" as const };
-            view.setStatus("Answering…");
-          }
-          const prompt = buildSideContext({
-            branch,
-            question,
+      // Steering opens pi's editor, which needs pi's screen; cancelling it comes back here.
+      let pending = initialQuestion;
+      let draft = "";
+      for (;;) {
+        const result = await runFullscreen<BtwWorkspaceResult>(ctx, (screen, theme, keybindings, done) => {
+          let request: AbortController | undefined;
+          const answer = async (question: string, signal: AbortSignal) => {
+            // Rebuilt for every question, so a follow-up sees the current state.
+            const branch = ctx.sessionManager.getBranch();
+            let facts: string | undefined;
+            if (settings.liveFacts) {
+              const cache = liveFacts.get(current) ?? new LiveFactsCache();
+              liveFacts.set(current, cache);
+              const key = [ctx.cwd, ...recentDirectories(branch)].join("\n");
+              facts = await cache.get(key, Date.now(), () => collectLiveFacts({ cwd: ctx.cwd, branch, run: runCommand }));
+              if (signal.aborted) return { kind: "aborted" as const };
+              view.setStatus("Answering…");
+            }
+            const prompt = buildSideContext({
+              branch,
+              question,
+              turns: current.turns,
+              activity,
+              idle: ctx.isIdle(),
+              liveFacts: facts,
+            });
+            return completeSideTurn({
+              model,
+              prompt,
+              thinkingLevel: current.thinkingLevel ?? "low",
+              routingSessionId: current.routingSessionId,
+              signal,
+              completeSimple,
+              sessionId: readBtwSessionId(ctx),
+            });
+          };
+          const ask = async (question: string) => {
+            request = new AbortController();
+            const { signal } = request;
+            view.startAnswer(question, settings.liveFacts ? "collecting repository facts…" : "Answering…");
+            const outcome = await answer(question, signal).catch((error: unknown) => ({
+              kind: "error" as const,
+              message: error instanceof Error ? error.message : String(error),
+            }));
+            if (outcome.kind === "aborted" || signal.aborted) return;
+            current.turns.push({
+              question,
+              answer: outcome.kind === "answered" ? outcome.answer : outcome.message,
+              at: Date.now(),
+              model: modelLabel,
+              ...(outcome.kind === "error" ? { error: true as const } : {}),
+            });
+            current.turns.splice(0, Math.max(0, current.turns.length - MAX_THREAD_TURNS));
+            if (current === thread) persist();
+            view.finishAnswer();
+          };
+          const view = new BtwWorkspaceView(screen, theme, {
             turns: current.turns,
-            activity,
-            idle: ctx.isIdle(),
-            liveFacts: facts,
-          });
-          return completeSideTurn({
-            model,
-            prompt,
-            thinkingLevel: current.thinkingLevel ?? "low",
-            routingSessionId: current.routingSessionId,
-            signal,
-            completeSimple,
-            sessionId: readBtwSessionId(ctx),
-          });
-        };
-        const ask = async (question: string) => {
-          request = new AbortController();
-          const { signal } = request;
-          view.startAnswer(question, settings.liveFacts ? "collecting repository facts…" : "Answering…");
-          const outcome = await answer(question, signal).catch((error: unknown) => ({
-            kind: "error" as const,
-            message: error instanceof Error ? error.message : String(error),
-          }));
-          if (outcome.kind === "aborted" || signal.aborted) return;
-          current.turns.push({
-            question,
-            answer: outcome.kind === "answered" ? outcome.answer : outcome.message,
-            at: Date.now(),
             model: modelLabel,
-            ...(outcome.kind === "error" ? { error: true as const } : {}),
+            thinkingLevel: current.thinkingLevel ?? "low",
+            thinkingLevels,
+            shortcuts: createBtwShortcuts(keybindings),
+            draft,
+            handlers: {
+              submit: (question) => void ask(question),
+              cycleThinking: (level) => {
+                current.thinkingLevel = level;
+              },
+              bringBack: () => done({ kind: "bringBack" }),
+              steer: (text) => done({ kind: "steer", draft: text }),
+              exit: () => {
+                if (request && !request.signal.aborted && view.answering) notifySafely(ctx, "Cancelled", "info");
+                request?.abort();
+                done({ kind: "closed" });
+              },
+            },
           });
-          current.turns.splice(0, Math.max(0, current.turns.length - MAX_THREAD_TURNS));
-          if (current === thread) persist();
-          view.finishAnswer();
-        };
-        const view = new BtwWorkspaceView(screen, theme, {
-          turns: current.turns,
-          model: modelLabel,
-          thinkingLevel: current.thinkingLevel ?? "low",
-          thinkingLevels,
-          shortcuts: createBtwShortcuts(keybindings),
-          handlers: {
-            submit: (question) => void ask(question),
-            cycleThinking: (level) => {
-              current.thinkingLevel = level;
-            },
-            bringBack: () => done({ kind: "bringBack" }),
-            exit: () => {
-              if (request && !request.signal.aborted && view.answering) notifySafely(ctx, "Cancelled", "info");
-              request?.abort();
-              done({ kind: "closed" });
-            },
-          },
+          if (pending) void ask(pending);
+          return view;
         });
-        if (initialQuestion) void ask(initialQuestion);
-        return view;
-      });
-
-      if (result?.kind === "bringBack") {
+        pending = "";
         const latest = current.turns.filter((turn) => !turn.error).at(-1);
-        if (!latest) return;
-        const block = formatBtwBringToMain(latest.question, latest.answer);
-        ctx.ui.setEditorText(appendToDraft(ctx.ui.getEditorText(), block));
-        const lines = block.split("\n").length;
-        notifySafely(ctx, `Brought back the latest answer (${lines} ${lines === 1 ? "line" : "lines"})`, "info");
+        if (result?.kind === "bringBack" && latest) {
+          const block = formatBtwBringToMain(latest.question, latest.answer);
+          ctx.ui.setEditorText(appendToDraft(ctx.ui.getEditorText(), block));
+          const lines = block.split("\n").length;
+          notifySafely(ctx, `Brought back the latest answer (${lines} ${lines === 1 ? "line" : "lines"})`, "info");
+        }
+        if (result?.kind !== "steer") return;
+        const message = await ctx.ui.editor("Steer the main agent", result.draft.trim() ? result.draft : (latest?.answer ?? ""));
+        if (message?.trim()) {
+          if (ctx.isIdle()) pi.sendUserMessage(message);
+          else pi.sendUserMessage(message, { deliverAs: "steer" });
+          notifySafely(ctx, "Sent to the main agent", "info");
+          return;
+        }
+        draft = result.draft;
       }
     },
   });

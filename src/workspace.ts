@@ -37,6 +37,8 @@ export interface BtwWorkspaceHandlers {
   /** Ask a question; the controller calls `startAnswer` and `finishAnswer`. */
   submit(question: string): void;
   bringBack(): void;
+  /** Close the workspace and steer the main agent, starting from the composer's draft. */
+  steer(draft: string): void;
   cycleThinking(level: BtwThinkingLevel): void;
   exit(): void;
 }
@@ -49,6 +51,8 @@ export interface BtwWorkspaceOptions {
   thinkingLevels: readonly BtwThinkingLevel[];
   shortcuts: BtwShortcuts;
   handlers: BtwWorkspaceHandlers;
+  /** Composer text to start with. */
+  draft?: string;
 }
 
 /** Fullscreen side thread: header, transcript, footer and composer. */
@@ -83,6 +87,7 @@ export class BtwWorkspaceView implements BtwWorkspaceComponent, Focusable {
       },
     };
     this.editor = new Editor(tui, editorTheme);
+    if (options.draft) this.editor.setText(options.draft);
     this.editor.onChange = () => {
       this.warning = undefined;
     };
@@ -199,6 +204,14 @@ export class BtwWorkspaceView implements BtwWorkspaceComponent, Focusable {
       }
       return;
     }
+    if (shortcuts.matches(data, "steer")) {
+      if (this.answering) this.warn("Wait for the answer, or Ctrl+C to cancel");
+      else {
+        this.close();
+        handlers.steer(this.getDraft());
+      }
+      return;
+    }
     if (shortcuts.matches(data, "cycleThinking")) {
       const levels = this.options.thinkingLevels;
       if (levels.length > 1) {
@@ -263,17 +276,23 @@ export class BtwWorkspaceView implements BtwWorkspaceComponent, Focusable {
   private renderFooter(width: number): string {
     if (this.warning) return truncateToWidth(this.theme.fg("warning", this.warning), width);
     const { shortcuts } = this.options;
-    const keys = [
-      ["Enter", "send"],
-      [shortcuts.label("bringBack"), "bring back"],
-      [this.options.thinkingLevels.length > 1 ? shortcuts.label("cycleThinking") : undefined, "thinking"],
-      [shortcuts.label("exit"), this.answering ? "cancel" : "exit"],
-    ].filter((pair): pair is [string, string] => pair[0] !== undefined);
+    const thinking = this.options.thinkingLevels.length > 1 ? shortcuts.label("cycleThinking") : undefined;
+    // While answering, only cancelling and the thinking level apply.
+    const keys = (
+      this.answering
+        ? [[shortcuts.label("exit"), "cancel"], [thinking, "thinking"]]
+        : [
+            ["Enter", "send"],
+            [shortcuts.label("bringBack"), "bring back"],
+            [shortcuts.label("steer"), "steer"],
+            [thinking, "thinking"],
+            [shortcuts.label("exit"), "exit"],
+          ]
+    ).filter((pair): pair is [string, string] => pair[0] !== undefined);
+    const status = this.answering ? `${this.loader.render(width).at(-1)?.trim() || "Answering…"} • ` : "";
     const full = keys.map(([key, action]) => `${key} ${action}`).join(" • ");
-    const hints = visibleWidth(full) <= width ? full : keys.map(([key]) => key).join(" • ");
-    if (!this.answering) return truncateToWidth(this.theme.fg("muted", hints), width);
-    const status = this.loader.render(Math.max(1, width)).at(-1)?.trim() ?? "Answering…";
-    return truncateToWidth(`${status} • ${this.theme.fg("muted", hints)}`, width);
+    const hints = visibleWidth(status + full) <= width ? full : keys.map(([key]) => key).join(" • ");
+    return truncateToWidth(status + this.theme.fg("muted", hints), width);
   }
 }
 

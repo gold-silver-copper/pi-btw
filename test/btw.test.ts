@@ -245,3 +245,56 @@ function assistantText(text: string) {
     stopReason: "stop",
   } as never;
 }
+
+test("steer while the main agent runs sends the composer draft as a steer", async () => {
+  const prompts: Array<{ title: string; prefill?: string }> = [];
+  const harness = createBtwHarness({
+    answers: ["you are 80% done"],
+    isIdle: () => false,
+    editor: async (title, prefill) => {
+      prompts.push({ title, prefill });
+      return "push now, don't wait for verify";
+    },
+  });
+  const closed = harness.run("how close?");
+  await harness.settle();
+  harness.type("push now");
+  harness.press(KEYS.ctrlN);
+  await closed;
+  assert.deepEqual(prompts, [{ title: "Steer the main agent", prefill: "push now" }]);
+  assert.deepEqual(harness.mock.sentUserMessages, [{ text: "push now, don't wait for verify", options: { deliverAs: "steer" } }]);
+  assert.deepEqual(harness.notifications.at(-1), { message: "Sent to the main agent", level: "info" });
+  assert.equal(harness.editorText, "");
+});
+
+test("steer while the main agent is idle sends a normal message, starting from the latest answer", async () => {
+  const prompts: Array<string | undefined> = [];
+  const harness = createBtwHarness({
+    answers: ["Stop the 30-minute run and commit."],
+    isIdle: () => true,
+    editor: async (_title, prefill) => {
+      prompts.push(prefill);
+      return prefill;
+    },
+  });
+  const closed = harness.run("write this as a short steering prompt");
+  await harness.settle();
+  harness.press(KEYS.ctrlN);
+  await closed;
+  assert.deepEqual(prompts, ["Stop the 30-minute run and commit."]);
+  assert.deepEqual(harness.mock.sentUserMessages, [{ text: "Stop the 30-minute run and commit.", options: undefined }]);
+});
+
+test("cancelling the steer editor returns to the side thread with the draft", async () => {
+  const harness = createBtwHarness({ editor: async () => undefined });
+  const closed = harness.run("");
+  await harness.settle();
+  harness.type("half-written steer");
+  harness.press(KEYS.ctrlN);
+  await harness.settle();
+  assert.equal(harness.workspaceOpen, true);
+  assert.equal(harness.view.getDraft(), "half-written steer");
+  harness.press(KEYS.ctrlC);
+  await closed;
+  assert.deepEqual(harness.mock.sentUserMessages, []);
+});

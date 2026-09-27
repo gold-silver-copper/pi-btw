@@ -20,6 +20,7 @@ function createView(turns: BtwTurn[] = [], handlers: Partial<BtwWorkspaceHandler
     handlers: {
       submit: (question) => actions.push(`submit:${question}`),
       bringBack: () => actions.push("bringBack"),
+      steer: (draft) => actions.push(`steer:${draft}`),
       cycleThinking: (level) => actions.push(`thinking:${level}`),
       exit: () => actions.push("exit"),
       ...handlers,
@@ -35,7 +36,7 @@ test("the header shows the model and thinking level; the footer lists the keys",
   const { view } = createView(answered);
   const lines = view.render(100);
   assert.match(lines[0] ?? "", /^─ btw · test\/side · thinking low ─+$/u);
-  assert.ok(lines.some((line) => line.includes("Enter send • Ctrl+R bring back • Shift+Tab thinking • Ctrl+C exit")));
+  assert.ok(lines.some((line) => line.includes("Enter send • Ctrl+R bring back • Ctrl+N steer • Shift+Tab thinking • Ctrl+C exit")));
 });
 
 test("the composer submits a trimmed question and rejects an empty one", () => {

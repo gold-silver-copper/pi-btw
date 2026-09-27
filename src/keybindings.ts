@@ -2,8 +2,11 @@ import type { KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import { isKeyRelease, type KeyId, matchesKey } from "@earendil-works/pi-tui";
 import { formatKeyLabel } from "./text.js";
 
-/** Fixed workspace keys. Only the thinking-cycle key follows pi's keybindings. */
-export const BTW_KEYS = { exit: "ctrl+c", bringBack: "ctrl+r" } as const;
+/**
+ * Fixed workspace keys. Only the thinking-cycle key follows pi's keybindings. Ctrl+N
+ * (steer) is bound by neither pi's editor nor terminal flow control (Ctrl+S / Ctrl+Q).
+ */
+export const BTW_KEYS = { exit: "ctrl+c", bringBack: "ctrl+r", steer: "ctrl+n" } as const;
 export type BtwAction = keyof typeof BTW_KEYS | "cycleThinking";
 
 export interface BtwShortcuts {
