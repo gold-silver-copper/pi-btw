@@ -1,0 +1,9 @@
+[
+  { "tools": [
+      { "name": "goal_progress", "args": { "goal_id": "$GOAL_ID", "note": "Parser ported; running the test suite next." } },
+      { "name": "bash", "args": { "command": "printf 'running 3 tests\\ntest parser::roundtrip ... ok\\ntest parser::unicode ... ok\\ntest parser::fuzz ... FAILED\\n\\ntest result: FAILED. 2 passed; 1 failed; 0 ignored\\n'; exit 101" } }
+  ] },
+  { "tools": [ { "name": "bash", "args": { "command": "sleep 60" } } ] },
+  { "text": "About two thirds done: the parser is ported and 2 of 3 tests pass; parser::fuzz fails. Remaining: fix that test, then push." },
+  { "tools": [ { "name": "goal_complete", "args": { "goal_id": "$GOAL_ID", "summary": "Pushed as steered; parser::fuzz left for a follow-up.", "deviations": "Did not wait for the full verify run: the user asked to push now." } } ] }
+]
