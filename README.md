@@ -58,16 +58,16 @@ Assistant:
 
 pi-btw builds the context again for every question, so a follow-up such as "and now?" sees the current state. The request is one user message with these sections, in this order, and the question last:
 
-1. **Objective.** With pi-goal: the objective, its status and pause reason, the prompt file path, the active time and the last five progress notes with their ages. Without it: the first user message. Up to 4,000 characters.
+1. **Objective.** With pi-goal: the objective, its status and pause reason, the prompt file path and the last five progress notes with their times. For `/goal execute prompt.md`, the prompt file's contents follow, read again for every question: up to 12,000 characters, keeping the start and the end, with a note when the file changed since the goal started. A file that is gone, not a regular file, larger than 1 MB or not UTF-8 text gets one line saying so. Without pi-goal: the first user message. Up to 16,000 characters, none of it dependent on the clock.
 2. **Earlier work.** The latest compaction summary, up to 8,000 characters.
 3. **Earlier side questions.** This thread's questions and answers, oldest first, newest kept within 15,000 characters.
-4. **Main agent now.** Running or idle, the tool running now and for how long (for example ``bash `cargo test --workspace` running for 23m``), the time since its last activity, and whether a goal is waiting and on what.
+4. **Main agent now.** Running or idle, the tool running now and for how long (for example ``bash `cargo test --workspace` running for 23m``), the time since its last activity, the goal's active time and the age of its latest progress note, and whether a goal is waiting and on what.
 5. **Recent activity.** A timeline with wall-clock times, newest last: user messages, the agent's prose and the tail of its reasoning, and one line per tool call with its result paired to it (ok or error, the exit code for `bash`, the duration, and up to eight key lines such as test summaries and errors). Tool calls never include file contents: `write` shows the path and size, `edit` the path and the number of edits.
 6. **Live repository facts** (below).
 
 The whole request stays under 60,000 characters. Sections 1, 2, 4 and 6 have their own caps and are always kept; the timeline gets what remains.
 
-The side model is told the sections were collected just now, to answer progress questions from the objective, the notes, the current tool and recent results and say what remains, to say when something can't be told from the context, and never to claim it ran anything.
+The side model is told the sections were collected just now, to answer progress questions from the objective, the notes, the current tool and recent results and say what remains (the remaining work being whatever the prompt file asks that the notes and activity don't show as done), to say when something can't be told from the context, and never to claim it ran anything.
 
 ### Live repository facts
 
@@ -159,7 +159,7 @@ Only an identical request reuses the cache. A follow-up shares its first section
 - The timeline keeps what fits in the budget; on a busy goal that is roughly the last half hour.
 - What the main agent is doing right now (the running tool, when the run started) is tracked from pi's events in memory, so right after `/reload` it is known only from the session.
 - Side calls use the same provider and usage limits as the main agent.
-- Through claude-bridge, each question writes its whole context to the prompt cache and follow-ups do not read it back (see [Prompt caching](#prompt-caching)); the bridge's side-call path also ignores the thinking level.
+- Through claude-bridge, each question writes its whole context to the prompt cache and follow-ups do not read it back (see [Prompt caching](#prompt-caching)). The thinking level reaches Claude Code as its effort from pi-claude-bridge 5b91c10 on; older bridges ignore it.
 - pi-tui's editor recurses without end on a double-width character at one or two columns wide, in pi's own editor too.
 
 ## License

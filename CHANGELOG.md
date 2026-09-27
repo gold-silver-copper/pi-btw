@@ -1,5 +1,11 @@
 # pi-btw
 
+## Unreleased
+
+- The Objective includes the goal's prompt file (`/goal execute prompt.md`), read again for every question: up to 12,000 characters with the start and end kept, a note when it changed since the goal started, and one line instead when it is gone, not a regular file, over 1 MB or not UTF-8 text. The Objective's cap is 16,000 characters; the request stays under 60,000.
+- The Objective no longer depends on the clock: the goal's active time and the age of its latest note moved to "Main agent now", so repeated questions share the first sections.
+- Fuzzing covers the command as a state machine, the workspace's keys and widths, live facts and the stable first sections. `test/fixtures/measure-bridge-cache.mjs` and `drive-tui-live.py` check caching and a live run through claude-bridge.
+
 ## 0.62.0 — fork of @narumitw/pi-btw 0.61.1
 
 Forked from `github.com/narumiruna/pi-extensions`, `packages/pi-btw`, at `9058c15011ed250e69b89dbd680d785a82deb87d`, and reworked after an audit of 61 side questions across 20 sessions.
